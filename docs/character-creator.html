@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DewDrops - Character Creator</title>
+    </head>
+<body>
+
+    <h1>Create Your DewDrops Character</h1>
+
+    <form id="character-form">
+        <label for="char-name">Character Name:</label><br>
+        <input type="text" id="char-name" name="char-name" required><br><br>
+
+        <label for="char-race">Race/Clan:</label><br>
+        <input type="text" id="char-race" name="char-race"><br><br>
+
+        <h3>Attributes</h3>
+        <label for="fort">FORT:</label>
+        <input type="number" id="fort" name="fort" value="1" min="1"><br>
+
+        <label for="agi">AGI:</label>
+        <input type="number" id="agi" name="agi" value="1" min="1"><br>
+
+        <label for="int">INT:</label>
+        <input type="number" id="int" name="int" value="1" min="1"><br>
+
+        <label for="wits">WITS:</label>
+        <input type="number" id="wits" name="wits" value="1" min="1"><br>
+
+        <label for="magic">MAGIC:</label>
+        <input type="number" id="magic" name="magic" value="1" min="1"><br><br>
+
+        <button type="submit">Save Character</button>
+    </form>
+
+    <p id="feedback-message"></p>
+
+    <script type="module">
+        // Import the 'db' object from your firebase-init.js file
+        // NOTE: The path '../src/firebase-init.js' might need to be adjusted based on your file structure.
+        import { db } from '../src/firebase-init.js'; 
+
+        // Import the function to add a document to Firestore
+        import { collection, addDoc } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js";
+
+        // Get the form element from the page
+        const characterForm = document.getElementById('character-form');
+        const feedbackMessage = document.getElementById('feedback-message');
+
+        // Listen for when the user submits the form
+        characterForm.addEventListener('submit', async (e) => {
+            e.preventDefault(); // Prevent the page from reloading
+
+            // 1. Get the data from the form inputs
+            const characterData = {
+                name: characterForm['char-name'].value,
+                race: characterForm['char-race'].value,
+                attributes: {
+                    FORT: parseInt(characterForm['fort'].value),
+                    AGI: parseInt(characterForm['agi'].value),
+                    INT: parseInt(characterForm['int'].value),
+                    WITS: parseInt(characterForm['wits'].value),
+                    MAGIC: parseInt(characterForm['magic'].value)
+                },
+                createdAt: new Date() // Add a timestamp
+            };
+
+            // 2. Try to save the data to Firestore
+            try {
+                const docRef = await addDoc(collection(db, "characters"), characterData);
+                console.log("Document written with ID: ", docRef.id);
+                feedbackMessage.textContent = `Character "${characterData.name}" saved successfully!`;
+                characterForm.reset(); // Clear the form
+            } catch (error) {
+                console.error("Error adding document: ", error);
+                feedbackMessage.textContent = "Error saving character. Please try again.";
+            }
+        });
+    </script>
+
+</body>
+</html>
