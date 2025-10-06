@@ -4,13 +4,41 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DewDrops - Character Creator</title>
-    <link rel="stylesheet" href="styles.css"> 
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        /* New styles for the interactive bubble sheet */
+        .attribute-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .attribute-label {
+            font-weight: bold;
+            flex-basis: 100px; /* Give labels a fixed width */
+        }
+        .bubbles {
+            display: flex;
+        }
+        .bubble {
+            height: 25px;
+            width: 25px;
+            background-color: #ddd;
+            border-radius: 50%;
+            margin: 0 5px;
+            cursor: pointer;
+            border: 2px solid #aaa;
+        }
+        .bubble.filled {
+            background-color: #2c3e50;
+            border-color: #2c3e50;
+        }
+    </style>
 </head>
 <body>
 
     <header>
         <h1>Character Creator</h1>
-        <p>Forge your hero for the world of DewDrops.</p>
     </header>
     
     <nav>
@@ -22,25 +50,26 @@
             <label for="char-name">Character Name:</label><br>
             <input type="text" id="char-name" required><br><br>
             
-            <label for="char-race">Race/Clan:</label><br>
-            <input type="text" id="char-race"><br><br>
-    
-            <h3>Attributes (Start with 10 points to distribute)</h3>
-            <label for="fort">FORTITUDE (FORT):</label>
-            <input type="number" id="fort" value="1" min="1"><br>
-    
-            <label for="agi">AGILITY (AGI):</label>
-            <input type="number" id="agi" value="1" min="1"><br>
-    
-            <label for="int">INTELLIGENCE (INT):</label>
-            <input type="number" id="int" value="1" min="1"><br>
-    
-            <label for="wits">WITS:</label>
-            <input type="number" id="wits" value="1" min="1"><br>
-    
-            <label for="magic">MAGIC:</label>
-            <input type="number" id="magic" value="1" min="1"><br><br>
-    
+            <h3>Attributes</h3>
+            <div class="attribute-row">
+                <span class="attribute-label">STR:</span>
+                <div class="bubbles" data-attribute="STR">
+                    <div class="bubble"></div><div class="bubble"></div><div class="bubble"></div><div class="bubble"></div><div class="bubble"></div>
+                </div>
+            </div>
+            <div class="attribute-row">
+                <span class="attribute-label">FORT:</span>
+                <div class="bubbles" data-attribute="FORT">
+                    <div class="bubble"></div><div class="bubble"></div><div class="bubble"></div><div class="bubble"></div><div class="bubble"></div>
+                </div>
+            </div>
+            <div class="attribute-row">
+                <span class="attribute-label">AGI:</span>
+                <div class="bubbles" data-attribute="AGI">
+                    <div class="bubble"></div><div class="bubble"></div><div class="bubble"></div><div class="bubble"></div><div class="bubble"></div>
+                </div>
+            </div>
+            <br>
             <button type="submit">Save Character</button>
         </form>
     
@@ -48,49 +77,59 @@
     </main>
 
     <script type="module">
-        // 1. IMPORT THE DATABASE CONNECTION
-        // The path '../src/firebase-init.js' points from your /docs folder back to the root and then into /src.
-        // This path is crucial and must be correct for it to work.
         import { db } from '../src/firebase-init.js'; 
-        
-        // 2. IMPORT FIRESTORE FUNCTIONS
-        // These are the tools from the Firebase SDK that let us talk to the database.
         import { collection, addDoc } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js";
 
-        // 3. GET THE HTML ELEMENTS
         const characterForm = document.getElementById('character-form');
         const feedbackMessage = document.getElementById('feedback-message');
+        const allBubbleContainers = document.querySelectorAll('.bubbles');
 
-        // 4. LISTEN FOR THE FORM SUBMIT EVENT
+        // --- Logic for the interactive bubbles ---
+        allBubbleContainers.forEach(container => {
+            container.addEventListener('click', (e) => {
+                if (e.target.classList.contains('bubble')) {
+                    const bubblesInRow = Array.from(container.children);
+                    const clickedIndex = bubblesInRow.indexOf(e.target);
+
+                    // Fill bubbles up to the one clicked, and empty the rest
+                    bubblesInRow.forEach((bubble, index) => {
+                        if (index <= clickedIndex) {
+                            bubble.classList.add('filled');
+                        } else {
+                            bubble.classList.remove('filled');
+                        }
+                    });
+                }
+            });
+        });
+
+        // --- Logic for saving the form ---
         characterForm.addEventListener('submit', async (e) => {
-            e.preventDefault(); // This stops the page from reloading on submit
+            e.preventDefault();
+            feedbackMessage.textContent = 'Saving...';
 
-            feedbackMessage.textContent = 'Saving...'; // Give the user instant feedback
-
-            // 5. GATHER THE DATA FROM THE FORM INTO AN OBJECT
+            // Gather data from the bubbles
+            const attributes = {};
+            allBubbleContainers.forEach(container => {
+                const attributeName = container.dataset.attribute;
+                const score = container.querySelectorAll('.bubble.filled').length;
+                attributes[attributeName] = score;
+            });
+            
             const characterData = {
                 name: document.getElementById('char-name').value,
-                race: document.getElementById('char-race').value,
-                attributes: {
-                    FORT: parseInt(document.getElementById('fort').value),
-                    AGI: parseInt(document.getElementById('agi').value),
-                    INT: parseInt(document.getElementById('int').value),
-                    WITS: parseInt(document.getElementById('wits').value),
-                    MAGIC: parseInt(document.getElementById('magic').value)
-                },
-                createdAt: new Date() // Always good to have a timestamp
+                attributes: attributes, // Use the scores from our bubbles
+                createdAt: new Date()
             };
 
-            // 6. SAVE THE DATA TO FIRESTORE
+            // Save to Firestore
             try {
-                // The 'addDoc' function adds a new document to the "characters" collection
                 const docRef = await addDoc(collection(db, "characters"), characterData);
-                console.log("Document written with ID: ", docRef.id);
-                feedbackMessage.textContent = `Character "${characterData.name}" was saved successfully!`;
-                characterForm.reset(); // Clear the form for the next character
+                feedbackMessage.textContent = `Character "${characterData.name}" saved!`;
+                // You could add logic here to reset the bubbles if you want
             } catch (error) {
-                console.error("Error adding document: ", error);
-                feedbackMessage.textContent = "There was an error saving your character.";
+                console.error("Error saving character: ", error);
+                feedbackMessage.textContent = "Error saving. Check the console for details.";
             }
         });
     </script>
