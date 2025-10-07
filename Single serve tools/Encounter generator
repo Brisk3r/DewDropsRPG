@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Encounter Tracker</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            background-color: #f0f0f0;
+            color: #333;
+            margin: 0;
+            padding: 20px;
+        }
+        main {
+            max-width: 600px;
+            margin: auto;
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        h1, h2 {
+            text-align: center;
+            color: #2c3e50;
+        }
+        .generator-form {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #ecf0f1;
+            border-radius: 5px;
+        }
+        .generator-form input {
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            flex-grow: 1;
+        }
+        .generator-form button {
+            padding: 10px 15px;
+            border: none;
+            background-color: #27ae60;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        .generator-form button:hover {
+            background-color: #229954;
+        }
+        #enemy-list {
+            list-style: none;
+            padding: 0;
+        }
+        .enemy-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px;
+            background: #f9f9f9;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+        .enemy-name {
+            font-weight: bold;
+        }
+        .tracker {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .tracker button {
+            width: 30px;
+            height: 30px;
+            font-size: 18px;
+            border: 1px solid #ccc;
+            background: #fff;
+            cursor: pointer;
+        }
+        .threat-level {
+            font-size: 1.2em;
+            font-weight: bold;
+            width: 40px;
+            text-align: center;
+        }
+        .remove-btn {
+            background-color: #c0392b;
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .remove-btn:hover {
+            background-color: #a93226;
+        }
+    </style>
+</head>
+<body>
+
+    <main>
+        <h1>Encounter Generator</h1>
+        
+        <div class="generator-form">
+            <input type="text" id="enemy-name-input" placeholder="Enemy Name (e.g., Grumpy Toad)">
+            <input type="number" id="enemy-count-input" value="1" min="1" title="Number of enemies">
+            <button id="add-enemy-btn">Add Enemy</button>
+        </div>
+
+        <h2>Active Encounter</h2>
+        <ul id="enemy-list">
+            </ul>
+    </main>
+
+    <script>
+        const enemyNameInput = document.getElementById('enemy-name-input');
+        const enemyCountInput = document.getElementById('enemy-count-input');
+        const addEnemyBtn = document.getElementById('add-enemy-btn');
+        const enemyList = document.getElementById('enemy-list');
+
+        // Function to create and add a single enemy to the list
+        function createEnemy(name) {
+            const li = document.createElement('li');
+            li.className = 'enemy-item';
+
+            // Enemy Name
+            const enemyName = document.createElement('span');
+            enemyName.className = 'enemy-name';
+            enemyName.textContent = name;
+
+            // Threat/HP Tracker
+            const tracker = document.createElement('div');
+            tracker.className = 'tracker';
+            
+            const minusBtn = document.createElement('button');
+            minusBtn.textContent = '-';
+            
+            const threatLevel = document.createElement('span');
+            threatLevel.className = 'threat-level';
+            threatLevel.textContent = '10'; // Starting threat level
+
+            const plusBtn = document.createElement('button');
+            plusBtn.textContent = '+';
+
+            tracker.appendChild(minusBtn);
+            tracker.appendChild(threatLevel);
+            tracker.appendChild(plusBtn);
+
+            // Remove Button
+            const removeBtn = document.createElement('button');
+            removeBtn.className = 'remove-btn';
+            removeBtn.textContent = 'Remove';
+
+            // Add all parts to the list item
+            li.appendChild(enemyName);
+            li.appendChild(tracker);
+            li.appendChild(removeBtn);
+            
+            // Add the new enemy to the main list
+            enemyList.appendChild(li);
+
+            // --- Event Listeners for this specific enemy ---
+            plusBtn.addEventListener('click', () => {
+                let currentThreat = parseInt(threatLevel.textContent);
+                threatLevel.textContent = currentThreat + 1;
+            });
+
+            minusBtn.addEventListener('click', () => {
+                let currentThreat = parseInt(threatLevel.textContent);
+                if (currentThreat > 0) {
+                    threatLevel.textContent = currentThreat - 1;
+                }
+            });
+
+            removeBtn.addEventListener('click', () => {
+                enemyList.removeChild(li);
+            });
+        }
+
+        // --- Main Event Listener for the Add button ---
+        addEnemyBtn.addEventListener('click', () => {
+            const name = enemyNameInput.value.trim();
+            const count = parseInt(enemyCountInput.value);
+
+            if (name === '') {
+                alert('Please enter an enemy name.');
+                return;
+            }
+
+            for (let i = 0; i < count; i++) {
+                // Add a number if adding more than one enemy
+                const uniqueName = count > 1 ? `${name} ${i + 1}` : name;
+                createEnemy(uniqueName);
+            }
+
+            // Clear the name input for the next entry
+            enemyNameInput.value = '';
+            enemyNameInput.focus();
+        });
+
+    </script>
+
+</body>
+</html>
