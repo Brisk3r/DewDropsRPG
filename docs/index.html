@@ -3,53 +3,601 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DewDrops - Core Rules</title>
-    <link rel="stylesheet" href="styles.css"> 
+    <title>Dewdrops Character DB</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Firebase SDKs -->
+    <script type="module">
+        // Firebase Imports
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { 
+            getAuth, 
+            signInAnonymously, 
+            signInWithCustomToken, 
+            onAuthStateChanged,
+            setPersistence,
+            browserLocalPersistence
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { 
+            getFirestore, 
+            doc, 
+            getDoc, 
+            setDoc, 
+            addDoc, 
+            deleteDoc, 
+            onSnapshot, 
+            collection, 
+            query,
+            setLogLevel
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- Firebase Configuration ---
+        // These global variables are provided by the environment.
+        const firebaseConfig = {
+          apiKey: "AIzaSyCtNbE5ajxLdc57G5y3Wq9bz7ZgP4bgiEE",
+          authDomain: "gamedb-903e3.firebaseapp.com",
+          projectId: "gamedb-903e3",
+          storageBucket: "gamedb-903e3.firebasestorage.app",
+          messagingSenderId: "307571396357",
+          appId: "1:307571396357:web:76358b8a778ea69932316c",
+          measurementId: "G-X1L35GCLZD"
+        };
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let app, auth, db;
+        let userId = null;
+        let currentCharacterId = null;
+        let charactersCollectionRef = null;
+        let unsubscribeCharacterListener = null;
+
+        // --- UI Elements ---
+        const characterList = document.getElementById('character-list');
+        const characterForm = document.getElementById('character-form');
+        const formTitle = document.getElementById('form-title');
+        const btnNew = document.getElementById('btn-new');
+        const btnSave = document.getElementById('btn-save');
+        const btnDelete = document.getElementById('btn-delete');
+        const messageBox = document.getElementById('message-box');
+        const authStatus = document.getElementById('auth-status');
+
+        // --- Firebase Initialization & Auth ---
+        async function initializeFirebase() {
+            try {
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                setLogLevel('Debug'); // Enable Firestore logging
+
+                // Persist auth state locally
+                await setPersistence(auth, browserLocalPersistence);
+
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        authStatus.textContent = `User ID: ${userId}`;
+                        authStatus.classList.remove('text-red-400');
+                        authStatus.classList.add('text-green-400');
+                        
+                        // User is authenticated, set up Firestore references and listeners
+                        charactersCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/characters`);
+                        loadCharacters();
+                        setupFormListeners();
+                    } else {
+                        userId = null;
+                        authStatus.textContent = "Authenticating...";
+                        authStatus.classList.add('text-red-400');
+                        authStatus.classList.remove('text-green-400');
+                        
+                        // No user, attempt to sign in
+                        await attemptSignIn();
+                    }
+                });
+            } catch (error) {
+                console.error("Firebase Init Error:", error);
+                authStatus.textContent = "Firebase Init Error";
+                authStatus.classList.add('text-red-400');
+            }
+        }
+
+        async function attemptSignIn() {
+            try {
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (error) {
+                console.error("Authentication Error:", error);
+                authStatus.textContent = "Auth Error";
+                authStatus.classList.add('text-red-400');
+            }
+        }
+
+        // --- Firestore Functions ---
+
+        // Load all characters into the sidebar
+        function loadCharacters() {
+            if (unsubscribeCharacterListener) {
+                unsubscribeCharacterListener(); // Stop previous listener
+            }
+            if (!charactersCollectionRef) return;
+
+            unsubscribeCharacterListener = onSnapshot(query(charactersCollectionRef), (snapshot) => {
+                characterList.innerHTML = ''; // Clear list
+                if (snapshot.empty) {
+                    characterList.innerHTML = '<li class="p-2 text-gray-400">No characters found.</li>';
+                    return;
+                }
+                snapshot.forEach((doc) => {
+                    const character = doc.data();
+                    const li = document.createElement('li');
+                    li.className = `p-3 cursor-pointer hover:bg-gray-700 rounded-md truncate ${doc.id === currentCharacterId ? 'bg-blue-600 font-bold' : ''}`;
+                    li.textContent = character.name || 'Unnamed Character';
+                    li.dataset.id = doc.id;
+                    li.addEventListener('click', () => {
+                        displayCharacter(doc.id);
+                    });
+                    characterList.appendChild(li);
+                });
+            }, (error) => {
+                console.error("Error loading characters: ", error);
+                showMessage("Error loading characters.", "error");
+            });
+        }
+
+        // Display a specific character's details in the form
+        async function displayCharacter(docId) {
+            if (!db || !userId) return;
+
+            try {
+                const docRef = doc(db, `artifacts/${appId}/users/${userId}/characters`, docId);
+                const docSnap = await getDoc(docRef);
+
+                if (docSnap.exists()) {
+                    currentCharacterId = docId;
+                    characterForm.reset(); // Clear form first
+                    const data = docSnap.data();
+                    
+                    // Populate the form with data
+                    // This uses the 'name' attribute of each form input
+                    for (const key in data) {
+                        if (key === 'equipment' && Array.isArray(data[key])) {
+                            populateEquipment(data[key]);
+                        } else if (key === 'items' && typeof data[key] === 'string') {
+                             const itemsTextarea = characterForm.querySelector(`[name="items"]`);
+                             if(itemsTextarea) itemsTextarea.value = data[key];
+                        } else {
+                            const input = characterForm.querySelector(`[name="${key}"]`);
+                            if (input) {
+                                input.value = data[key];
+                            }
+                        }
+                    }
+                    
+                    formTitle.textContent = `Editing: ${data.name || 'Unnamed'}`;
+                    btnDelete.classList.remove('hidden');
+                    loadCharacters(); // Refresh list to highlight selection
+                } else {
+                    console.log("No such document!");
+                    clearForm();
+                }
+            } catch (error) {
+                console.error("Error getting document:", error);
+                showMessage("Error loading character.", "error");
+            }
+        }
+
+        // Save (Add or Update) a character
+        async function saveCharacter() {
+            if (!charactersCollectionRef) {
+                showMessage("Database not ready.", "error");
+                return;
+            }
+
+            // Collect all data from the form
+            const formData = new FormData(characterForm);
+            const characterData = {};
+            formData.forEach((value, key) => {
+                if (key.startsWith('equip-')) return; // Handled separately
+                characterData[key] = value;
+            });
+
+            // Collect equipment data
+            characterData.equipment = [];
+            const equipmentSlots = ['hand1', 'hand2', 'head', 'body', 'legs', 'acc1', 'acc2'];
+            equipmentSlots.forEach(slot => {
+                characterData.equipment.push({
+                    type: formData.get(`equip-type-${slot}`) || '',
+                    name: formData.get(`equip-name-${slot}`) || '',
+                    effect: formData.get(`equip-effect-${slot}`) || '',
+                });
+            });
+
+            try {
+                let docRef;
+                if (currentCharacterId) {
+                    // Update existing character
+                    docRef = doc(db, `artifacts/${appId}/users/${userId}/characters`, currentCharacterId);
+                    await setDoc(docRef, characterData, { merge: true });
+                    showMessage("Character updated successfully!", "success");
+                } else {
+                    // Add new character
+                    docRef = await addDoc(charactersCollectionRef, characterData);
+                    currentCharacterId = docRef.id;
+                    formTitle.textContent = `Editing: ${characterData.name || 'Unnamed'}`;
+                    btnDelete.classList.remove('hidden');
+                    showMessage("Character created successfully!", "success");
+                }
+                loadCharacters(); // Refresh list
+            } catch (error) {
+                console.error("Error saving character: ", error);
+                showMessage("Error saving character.", "error");
+            }
+        }
+
+        // Delete the currently loaded character
+        async function deleteCharacter() {
+            if (!currentCharacterId || !db || !userId) {
+                showMessage("No character selected to delete.", "error");
+                return;
+            }
+            
+            // Simple custom confirm
+            if (!window.confirm("Are you sure you want to delete this character? This action cannot be undone.")) {
+                 return;
+            }
+
+            try {
+                const docRef = doc(db, `artifacts/${appId}/users/${userId}/characters`, currentCharacterId);
+                await deleteDoc(docRef);
+                showMessage("Character deleted.", "success");
+                clearForm();
+                loadCharacters(); // Refresh list
+            } catch (error) {
+                console.error("Error deleting character: ", error);
+                showMessage("Error deleting character.", "error");
+            }
+        }
+
+        // --- Form & UI Helper Functions ---
+
+        // Set up main button listeners
+        function setupFormListeners() {
+            characterForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                saveCharacter();
+            });
+
+            btnNew.addEventListener('click', clearForm);
+            btnDelete.addEventListener('click', deleteCharacter);
+        }
+
+        // Clear the form to create a new character
+        function clearForm() {
+            characterForm.reset();
+            currentCharacterId = null;
+            formTitle.textContent = "New Character";
+            btnDelete.classList.add('hidden');
+            document.querySelectorAll('li[data-id]').forEach(li => {
+                li.classList.remove('bg-blue-600', 'font-bold');
+            });
+        }
+        
+        // Populate equipment fields from saved data
+        function populateEquipment(equipmentArray) {
+            const equipmentSlots = ['hand1', 'hand2', 'head', 'body', 'legs', 'acc1', 'acc2'];
+            equipmentArray.forEach((item, index) => {
+                const slot = equipmentSlots[index];
+                if (slot) {
+                    document.querySelector(`[name="equip-type-${slot}"]`).value = item.type || '';
+                    document.querySelector(`[name="equip-name-${slot}"]`).value = item.name || '';
+                    document.querySelector(`[name="equip-effect-${slot}"]`).value = item.effect || '';
+                }
+            });
+        }
+
+        // Show a temporary message to the user
+        function showMessage(message, type = "success") {
+            messageBox.textContent = message;
+            if (type === "error") {
+                messageBox.className = "p-3 rounded-lg bg-red-600 text-white text-center";
+            } else {
+                messageBox.className = "p-3 rounded-lg bg-green-600 text-white text-center";
+            }
+            messageBox.classList.remove('hidden');
+
+            setTimeout(() => {
+                messageBox.classList.add('hidden');
+            }, 3000);
+        }
+
+        // --- Utility ---
+        // Helper function to create form groups (label + input)
+        function createInputGroup(label, name, type = 'text', min, max, placeholder = '') {
+            const div = document.createElement('div');
+            const labelEl = document.createElement('label');
+            labelEl.setAttribute('for', name);
+            labelEl.className = "block text-sm font-medium text-gray-300 mb-1";
+            labelEl.textContent = label;
+            
+            const inputEl = document.createElement('input');
+            inputEl.type = type;
+            inputEl.id = name;
+            inputEl.name = name;
+            inputEl.placeholder = placeholder;
+            inputEl.className = "w-full bg-gray-700 border border-gray-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-blue-500 focus:border-blue-500";
+            
+            if (type === 'number') {
+                if (min !== undefined) inputEl.min = min;
+                if (max !== undefined) inputEl.max = max;
+            }
+            
+            div.appendChild(labelEl);
+            div.appendChild(inputEl);
+            return div;
+        }
+        
+        // Helper to create equipment rows
+        function createEquipmentRow(labelText, slotName) {
+            const div = document.createElement('div');
+            div.className = "grid grid-cols-1 md:grid-cols-4 gap-2 items-center";
+            
+            const labelEl = document.createElement('label');
+            labelEl.className = "font-medium text-gray-300";
+            labelEl.textContent = labelText;
+            div.appendChild(labelEl);
+            
+            const typeInput = document.createElement('input');
+            typeInput.type = 'text';
+            typeInput.name = `equip-type-${slotName}`;
+            typeInput.placeholder = 'Type';
+            typeInput.className = "w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-blue-500 focus:border-blue-500";
+            div.appendChild(typeInput);
+            
+            const nameInput = document.createElement('input');
+            nameInput.type = 'text';
+            nameInput.name = `equip-name-${slotName}`;
+            nameInput.placeholder = 'Name';
+            nameInput.className = "w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-blue-500 focus:border-blue-500";
+            div.appendChild(nameInput);
+            
+            const effectInput = document.createElement('input');
+            effectInput.type = 'text';
+            effectInput.name = `equip-effect-${slotName}`;
+            effectInput.placeholder = 'Effect';
+            effectInput.className = "w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-blue-500 focus:border-blue-500";
+            div.appendChild(effectInput);
+            
+            return div;
+        }
+
+        // Dynamically build the form based on the character sheet
+        function buildForm() {
+            const formInner = document.getElementById('form-inner');
+            
+            // --- Section: Basic Info ---
+            let section = document.createElement('div');
+            section.className = "p-4 bg-gray-800 rounded-lg shadow-lg grid grid-cols-1 md:grid-cols-3 gap-4";
+            section.appendChild(createInputGroup('Name', 'name', 'text', undefined, undefined, 'Character Name'));
+            section.appendChild(createInputGroup('Race/Clan', 'race', 'text', undefined, undefined, 'e.g. Elf / Moonclan'));
+            section.appendChild(createInputGroup('Age', 'age', 'number', 0, 999));
+            formInner.appendChild(section);
+            
+            // --- Section: Attributes ---
+            section = document.createElement('div');
+            section.className = "p-4 bg-gray-800 rounded-lg shadow-lg";
+            let sectionTitle = document.createElement('h3');
+            sectionTitle.className = "text-xl font-semibold mb-3 text-white";
+            sectionTitle.textContent = "✨ Attributes";
+            section.appendChild(sectionTitle);
+            let grid = document.createElement('div');
+            grid.className = "grid grid-cols-2 md:grid-cols-3 gap-4";
+            const attributes = ['STR', 'INT', 'AGI', 'FORT', 'WIT', 'PERC', 'PRES', 'MAG', 'CHAR'];
+            attributes.forEach(attr => {
+                grid.appendChild(createInputGroup(attr, attr.toLowerCase(), 'number', 0, 5));
+            });
+            section.appendChild(grid);
+            formInner.appendChild(section);
+
+            // --- Section: Background & Awards ---
+            section = document.createElement('div');
+            section.className = "p-4 bg-gray-800 rounded-lg shadow-lg";
+            sectionTitle = document.createElement('h3');
+            sectionTitle.className = "text-xl font-semibold mb-3 text-white";
+            sectionTitle.textContent = "📜 Background & 🏆 Awards";
+            section.appendChild(sectionTitle);
+            grid = document.createElement('div');
+            grid.className = "grid grid-cols-1 md:grid-cols-3 gap-4";
+            grid.appendChild(createInputGroup('Reputation (Good)', 'rep_good', 'number', 0, 5));
+            grid.appendChild(createInputGroup('Reputation (Bad)', 'rep_bad', 'number', 0, 5));
+            grid.appendChild(createInputGroup('Excel', 'excel', 'number', 0, 10));
+            grid.appendChild(createInputGroup('EXP', 'exp', 'number', 0, 10));
+            section.appendChild(grid);
+            formInner.appendChild(section);
+            
+            // --- Section: Traits & Flaws ---
+            section = document.createElement('div');
+            section.className = "p-4 bg-gray-800 rounded-lg shadow-lg grid grid-cols-1 md:grid-cols-2 gap-6";
+            
+            // Traits
+            let subSection = document.createElement('div');
+            let subTitle = document.createElement('h3');
+            subTitle.className = "text-lg font-semibold mb-2 text-white";
+            subTitle.textContent = "🌟 Traits";
+            subSection.appendChild(subTitle);
+            let subGrid = document.createElement('div');
+            subGrid.className = "grid grid-cols-2 gap-x-4 gap-y-2";
+            const traits = ['Melee', 'Projectile', 'Athletics', 'Medicine', 'Drive', 'Craft', 'Mechanics', 'Empathy', 'Stealth', 'Streetwise', 'Survival', 'Perform', 'Brave', 'Luck'];
+            traits.forEach(trait => {
+                subGrid.appendChild(createInputGroup(trait, `trait_${trait.toLowerCase()}`, 'number', 0, 4));
+            });
+            subSection.appendChild(subGrid);
+            section.appendChild(subSection);
+            
+            // Flaws
+            subSection = document.createElement('div');
+            subTitle = document.createElement('h3');
+            subTitle.className = "text-lg font-semibold mb-2 text-white";
+            subTitle.textContent = "👤 Flaws";
+            subSection.appendChild(subTitle);
+            subGrid = document.createElement('div');
+            subGrid.className = "grid grid-cols-2 gap-x-4 gap-y-2";
+            const flaws = ['Ego', 'Dull', 'Lazy', 'Volatile', 'Rowdy', 'Careless', 'Clumsy', 'Cruel', 'Paranoid', 'Gullible', 'Spoilt', 'Shy', 'Phobia', 'Chaos'];
+            flaws.forEach(flaw => {
+                subGrid.appendChild(createInputGroup(flaw, `flaw_${flaw.toLowerCase()}`, 'number', 0, 6));
+            });
+            subSection.appendChild(subGrid);
+            section.appendChild(subSection);
+            formInner.appendChild(section);
+            
+            // --- Section: Extra & Magic ---
+            section = document.createElement('div');
+            section.className = "p-4 bg-gray-800 rounded-lg shadow-lg grid grid-cols-1 md:grid-cols-2 gap-6";
+            
+            // Extra
+            subSection = document.createElement('div');
+            subTitle = document.createElement('h3');
+            subTitle.className = "text-lg font-semibold mb-2 text-white";
+            subTitle.textContent = "📒 Extra";
+            subSection.appendChild(subTitle);
+            subGrid = document.createElement('div');
+            subGrid.className = "flex flex-col gap-2";
+            subGrid.appendChild(createInputGroup('Racial', 'extra_racial', 'text'));
+            subGrid.appendChild(createInputGroup('Special', 'extra_special', 'text'));
+            subGrid.appendChild(createInputGroup('Languages', 'extra_languages', 'text'));
+            subGrid.appendChild(createInputGroup('Affiliates', 'extra_affiliates', 'text'));
+            subGrid.appendChild(createInputGroup('Alignment', 'extra_alignment', 'text'));
+            subSection.appendChild(subGrid);
+            section.appendChild(subSection);
+            
+            // Magic
+            subSection = document.createElement('div');
+            subTitle = document.createElement('h3');
+            subTitle.className = "text-lg font-semibold mb-2 text-white";
+            subTitle.textContent = "🔮 Magic";
+            subSection.appendChild(subTitle);
+            subGrid = document.createElement('div');
+            subGrid.className = "flex flex-col gap-2";
+            subGrid.appendChild(createInputGroup('Mastery', 'magic_mastery', 'text'));
+            subGrid.appendChild(createInputGroup('Spell 1', 'magic_spell1', 'text'));
+            subGrid.appendChild(createInputGroup('Spell 2', 'magic_spell2', 'text'));
+            subGrid.appendChild(createInputGrout('Spell 3', 'magic_spell3', 'text'));
+            subGrid.appendChild(createInputGroup('Spell 4', 'magic_spell4', 'text'));
+            subGrid.appendChild(createInputGroup('Spell 🌌', 'magic_spell_uni', 'text'));
+            subSection.appendChild(subGrid);
+            section.appendChild(subSection);
+            formInner.appendChild(section);
+            
+            // --- Section: Equipment ---
+            section = document.createElement('div');
+            section.className = "p-4 bg-gray-800 rounded-lg shadow-lg";
+            sectionTitle = document.createElement('h3');
+            sectionTitle.className = "text-xl font-semibold mb-3 text-white";
+            sectionTitle.textContent = "🔪 Equipment";
+            section.appendChild(sectionTitle);
+            grid = document.createElement('div');
+            grid.className = "flex flex-col gap-3";
+            grid.appendChild(createEquipmentRow('Hand', 'hand1'));
+            grid.appendChild(createEquipmentRow('Hand', 'hand2'));
+            grid.appendChild(createEquipmentRow('Head', 'head'));
+            grid.appendChild(createEquipmentRow('Body', 'body'));
+            grid.appendChild(createEquipmentRow('Legs', 'legs'));
+            grid.appendChild(createEquipmentRow('Acc.', 'acc1'));
+            grid.appendChild(createEquipmentRow('Acc.', 'acc2'));
+            section.appendChild(grid);
+            formInner.appendChild(section);
+
+            // --- Section: Items & Currency ---
+            section = document.createElement('div');
+            section.className = "p-4 bg-gray-800 rounded-lg shadow-lg grid grid-cols-1 md:grid-cols-2 gap-6";
+            
+            // Items
+            subSection = document.createElement('div');
+            subTitle = document.createElement('h3');
+            subTitle.className = "text-lg font-semibold mb-2 text-white";
+            subTitle.textContent = "🔨 Items";
+            subSection.appendChild(subTitle);
+            const itemsTextarea = document.createElement('textarea');
+            itemsTextarea.name = 'items';
+            itemsTextarea.rows = 10;
+            itemsTextarea.className = "w-full bg-gray-700 border border-gray-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-blue-500 focus:border-blue-500";
+            itemsTextarea.placeholder = "List items, one per line...";
+            subSection.appendChild(itemsTextarea);
+            section.appendChild(subSection);
+            
+            // Currency
+            subSection = document.createElement('div');
+            subTitle = document.createElement('h3');
+            subTitle.className = "text-lg font-semibold mb-2 text-white";
+            subTitle.textContent = "👛 Caps";
+            subSection.appendChild(subTitle);
+            subGrid = document.createElement('div');
+            subGrid.className = "flex flex-col gap-2";
+            subGrid.appendChild(createInputGroup('Gold (G)', 'caps_g', 'number', 0));
+            subGrid.appendChild(createInputGroup('Silver (S)', 'caps_s', 'number', 0));
+            subGrid.appendChild(createInputGroup('Copper (C)', 'caps_c', 'number', 0));
+            subSection.appendChild(subGrid);
+            section.appendChild(subSection);
+            formInner.appendChild(section);
+        }
+
+        // Start the application
+        document.addEventListener('DOMContentLoaded', () => {
+            buildForm(); // Dynamically create the form inputs
+            initializeFirebase(); // Then initialize Firebase
+        });
+
+    </script>
 </head>
-<body>
+<body class="bg-gray-900 text-white font-sans">
 
-    <header>
-        <h1>Welcome to the World of DewDrops</h1>
-        <p>A simple and concise tabletop RPG based in the microverse.</p>
-    </header>
+    <div class="flex flex-col md:flex-row min-h-screen">
+        
+        <!-- Sidebar: Character List -->
+        <aside class="w-full md:w-64 lg:w-72 bg-gray-800 p-4 shadow-lg flex-shrink-0">
+            <h2 class="text-2xl font-bold mb-4 text-white">My Characters</h2>
+            <button id="btn-new" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg mb-4 transition duration-200">
+                + New Character
+            </button>
+            <ul id="character-list" class="space-y-2">
+                <!-- Character items will be loaded here by JavaScript -->
+                <li class="p-2 text-gray-400">Loading...</li>
+            </ul>
+            <div id="auth-status" class="mt-4 text-xs text-gray-500 break-words">Connecting...</div>
+        </aside>
 
-    <nav>
-        <a href="#intro">Intro</a>
-        <a href="#gameplay">Gameplay</a>
-        <a href="#creation">Character Creation</a>
-        <a href="#magic">Magic & Spells</a>
-        <a href="character-creator.html" class="cta-button">Character Creator</a>
-    </nav>
+        <!-- Main Content: Character Sheet Form -->
+        <main class="flex-1 p-4 md:p-8 overflow-y-auto">
+            <form id="character-form">
+                
+                <!-- Sticky Header -->
+                <header class="flex flex-col sm:flex-row justify-between items-center mb-6 sticky top-0 bg-gray-900 py-4 z-10">
+                    <h2 id="form-title" class="text-3xl font-bold text-white mb-2 sm:mb-0">New Character</h2>
+                    <div class="flex space-x-2">
+                        <button type_button" id="btn-delete" class="hidden bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg transition duration-200">
+                            Delete
+                        </button>
+                        <button type="submit" id="btn-save" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition duration-200">
+                            Save Character
+                        </button>
+                    </div>
+                </header>
 
-    <main>
-        <section id="intro">
-            <h2>Intro</h2>
-            <p>Welcome to the world of Dew Drops, a simple and concise tabletop RPG based in the microverse, a realm populated by anthropomorphic critters standing at roughly a 10th of normal human size. Your world is perilous and the backyard vast! Let’s dig into some of the basics.</p>
-            <h3>The Ascension</h3>
-            <p>Though the world has become populated with the humanoid descendants of various fauna, there are still varieties of smaller animals in the world. Through a mysterious process is known as “The Ascension”, the species of this world gained sentience.</p>
-        </section>
+                <!-- Message Box -->
+                <div id="message-box" class="hidden mb-4 p-3 rounded-lg text-white text-center"></div>
 
-        <section id="gameplay">
-            <h2>Basic Gameplay</h2>
-            <p>The gameplay is based on your standard D20 with a slight twist: in Dew Drops your success is based on the proximity to the number 10. When an action is proclaimed, rolling a number 10 would be classed as a perfect action or critical success. Modifiers based on the relevant character attributes, traits and flaws determine how far off ten you can be before failing. For example, to dodge, an AGI of 1 and Athletics of 3 would mean rolling 4 below or above 10 (a roll of 6 to 14) would count as a success. This would be contested by the roll of the attacker, with the difference resulting in the damage from the attack.</p>
-            <p>Conversely, the traditional “failure” scenario is applied to under/over actions at 1/20 respectively. A 1 is a drastic under-action (e.g., standing still when trying to dodge) and a 20 is an over-action, resulting in dodging but going beyond the mark, possibly tripping or crashing into something.</p>
-        </section>
+                <!-- Form Fields Container -->
+                <div id="form-inner" class="space-y-6">
+                    <!-- Character sheet form fields will be dynamically generated here -->
+                </div>
 
-        <section id="creation">
-            <h2>Character’s Creation Process</h2>
-            <p>Stats and attributes are the backbone of your character, defining their raw capabilities. There are 5 main attributes: FORT, AGI, INT, WITS, and MAGIC. You start with 10 points to distribute among these attributes, with each stat starting at a base of 1.</p>
-             </section>
+            </form>
+        </main>
 
-        <section id="magic">
-            <h2>Magic & Spells</h2>
-            <p>Magic in Dew Drops is a rare and mysterious force, often tied to ancient Faye realms or the enigmatic shadows of the Twilight. Spells are defined and refined by the user as they develop their magical abilities. While a spell or technique can be taught to another, it is entirely up to the user to name and exert their influence on their mastered element.</p>
-            <p>A spell's power is defined by the user's magic level and whether or not the spell is practiced. For each level in Magic, the player may write down a spell. For example, if they choose to write "Firewall", this becomes a learnt spell that can be called upon and gets +1 on a die roll when used. The fifth slot is regarded as an ultimate, giving +1 to critical hits when cast (meaning a result of 11-12 is regarded as a critical success). A spell that isn’t defined on the character sheet but still falls under the user's mastery is rolled like any other attribute.</p>
-        </section>
-    </main>
-
-    <footer>
-        <p>DewDrops RPG - A game by you!</p>
-    </footer>
+    </div>
 
 </body>
 </html>
+
+
