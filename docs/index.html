@@ -6,6 +6,34 @@
     <title>Dewdrops Character DB</title>
     <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .bubble-container {
+            display: flex;
+            flex-wrap: wrap; /* Allow wrapping for many bubbles like EXP */
+            gap: 6px;
+            align-items: center;
+            min-height: 38px; /* Match input height */
+            padding-top: 5px; /* Align with label */
+            padding-bottom: 5px;
+        }
+        .bubble {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            border: 2px solid #6b7280; /* gray-500 */
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .bubble:hover {
+            border-color: #3b82f6; /* blue-500 */
+            transform: scale(1.1);
+        }
+        .bubble.filled {
+            background-color: #3b82f6; /* blue-500 */
+            border-color: #3b82f6; /* blue-500 */
+        }
+    </style>
     <!-- Load Firebase SDKs -->
     <script type="module">
         // Firebase Imports
@@ -171,6 +199,14 @@
                             const input = characterForm.querySelector(`[name="${key}"]`);
                             if (input) {
                                 input.value = data[key];
+
+                                // If it's a hidden input for bubbles, update visuals
+                                if (input.type === 'hidden') {
+                                    const container = characterForm.querySelector(`.bubble-container[data-target-input="${key}"]`);
+                                    if (container) {
+                                        updateBubbleVisuals(container, parseInt(data[key], 10) || 0);
+                                    }
+                                }
                             }
                         }
                     }
@@ -262,6 +298,39 @@
 
         // --- Form & UI Helper Functions ---
 
+        // Handle clicking on a bubble
+        function handleBubbleClick(bubble) {
+            const container = bubble.parentElement;
+            const targetInputName = container.dataset.targetInput;
+            const hiddenInput = document.getElementById(targetInputName);
+            const clickedValue = parseInt(bubble.dataset.value, 10);
+            const currentValue = parseInt(hiddenInput.value, 10);
+
+            let newValue;
+            // If clicking the same bubble that is the current max value, toggle to 0
+            if (currentValue === clickedValue) {
+                newValue = 0;
+            } else {
+                newValue = clickedValue;
+            }
+
+            hiddenInput.value = newValue;
+            updateBubbleVisuals(container, newValue);
+        }
+        
+        // Update the visual state of bubbles in a container
+        function updateBubbleVisuals(container, value) {
+            if (!container) return; // Guard clause
+            const bubbles = container.querySelectorAll('.bubble');
+            bubbles.forEach(b => {
+                if (parseInt(b.dataset.value, 10) <= value) {
+                    b.classList.add('filled');
+                } else {
+                    b.classList.remove('filled');
+                }
+            });
+        }
+
         // Set up main button listeners
         function setupFormListeners() {
             characterForm.addEventListener('submit', (e) => {
@@ -271,6 +340,14 @@
 
             btnNew.addEventListener('click', clearForm);
             btnDelete.addEventListener('click', deleteCharacter);
+
+            // Add event delegation for bubble clicks
+            const formInner = document.getElementById('form-inner');
+            formInner.addEventListener('click', (e) => {
+                if (e.target.classList.contains('bubble')) {
+                    handleBubbleClick(e.target);
+                }
+            });
         }
 
         // Clear the form to create a new character
@@ -282,6 +359,12 @@
             document.querySelectorAll('li[data-id]').forEach(li => {
                 li.classList.remove('bg-blue-600', 'font-bold');
             });
+
+            // Reset all bubble containers
+            document.querySelectorAll('.bubble-container').forEach(container => {
+                updateBubbleVisuals(container, 0);
+            });
+            // form.reset() handles the hidden inputs
         }
         
         // Populate equipment fields from saved data
@@ -337,6 +420,40 @@
             div.appendChild(inputEl);
             return div;
         }
+
+        // Helper function to create bubble inputs
+        function createBubbleGroup(label, name, maxBubbles) {
+            const div = document.createElement('div');
+            
+            const labelEl = document.createElement('label');
+            labelEl.setAttribute('for', name);
+            labelEl.className = "block text-sm font-medium text-gray-300 mb-1";
+            labelEl.textContent = label;
+            div.appendChild(labelEl);
+            
+            // Hidden input to store the actual value
+            const inputEl = document.createElement('input');
+            inputEl.type = 'hidden';
+            inputEl.id = name;
+            inputEl.name = name;
+            inputEl.value = 0; // Default to 0
+            div.appendChild(inputEl);
+
+            // Container for bubbles
+            const bubbleContainer = document.createElement('div');
+            bubbleContainer.className = 'bubble-container';
+            bubbleContainer.dataset.targetInput = name; // Link container to hidden input
+
+            for (let i = 1; i <= maxBubbles; i++) {
+                const bubble = document.createElement('span');
+                bubble.className = 'bubble';
+                bubble.dataset.value = i;
+                bubbleContainer.appendChild(bubble);
+            }
+            div.appendChild(bubbleContainer);
+            
+            return div;
+        }
         
         // Helper to create equipment rows
         function createEquipmentRow(labelText, slotName) {
@@ -374,14 +491,12 @@
 
         // Dynamically build the form based on the character sheet
         function buildForm() {
-            const formInner = document.getElementById('form-inner');
-            
-            // --- Section: Basic Info ---
+<!-- ... existing code ...
             let section = document.createElement('div');
             section.className = "p-4 bg-gray-800 rounded-lg shadow-lg grid grid-cols-1 md:grid-cols-3 gap-4";
             section.appendChild(createInputGroup('Name', 'name', 'text', undefined, undefined, 'Character Name'));
             section.appendChild(createInputGroup('Race/Clan', 'race', 'text', undefined, undefined, 'e.g. Elf / Moonclan'));
-            section.appendChild(createInputGroup('Age', 'age', 'number', 0, 999));
+            section.appendChild(createInputGroup('Age', 'age', 'number', 0, 9999));
             formInner.appendChild(section);
             
             // --- Section: Attributes ---
@@ -392,10 +507,10 @@
             sectionTitle.textContent = "✨ Attributes";
             section.appendChild(sectionTitle);
             let grid = document.createElement('div');
-            grid.className = "grid grid-cols-2 md:grid-cols-3 gap-4";
+            grid.className = "grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-1";
             const attributes = ['STR', 'INT', 'AGI', 'FORT', 'WIT', 'PERC', 'PRES', 'MAG', 'CHAR'];
             attributes.forEach(attr => {
-                grid.appendChild(createInputGroup(attr, attr.toLowerCase(), 'number', 0, 5));
+                grid.appendChild(createBubbleGroup(attr, attr.toLowerCase(), 5));
             });
             section.appendChild(grid);
             formInner.appendChild(section);
@@ -408,11 +523,11 @@
             sectionTitle.textContent = "📜 Background & 🏆 Awards";
             section.appendChild(sectionTitle);
             grid = document.createElement('div');
-            grid.className = "grid grid-cols-1 md:grid-cols-3 gap-4";
-            grid.appendChild(createInputGroup('Reputation (Good)', 'rep_good', 'number', 0, 5));
-            grid.appendChild(createInputGroup('Reputation (Bad)', 'rep_bad', 'number', 0, 5));
-            grid.appendChild(createInputGroup('Excel', 'excel', 'number', 0, 10));
-            grid.appendChild(createInputGroup('EXP', 'exp', 'number', 0, 10));
+            grid.className = "grid grid-cols-1 md:grid-cols-3 gap-x-4 gap-y-1";
+            grid.appendChild(createBubbleGroup('Reputation (Good)', 'rep_good', 5));
+            grid.appendChild(createBubbleGroup('Reputation (Bad)', 'rep_bad', 5));
+            grid.appendChild(createBubbleGroup('Excel', 'excel', 10));
+            grid.appendChild(createBubbleGroup('EXP', 'exp', 10));
             section.appendChild(grid);
             formInner.appendChild(section);
             
@@ -427,10 +542,10 @@
             subTitle.textContent = "🌟 Traits";
             subSection.appendChild(subTitle);
             let subGrid = document.createElement('div');
-            subGrid.className = "grid grid-cols-2 gap-x-4 gap-y-2";
+            subGrid.className = "grid grid-cols-2 gap-x-4 gap-y-1";
             const traits = ['Melee', 'Projectile', 'Athletics', 'Medicine', 'Drive', 'Craft', 'Mechanics', 'Empathy', 'Stealth', 'Streetwise', 'Survival', 'Perform', 'Brave', 'Luck'];
             traits.forEach(trait => {
-                subGrid.appendChild(createInputGroup(trait, `trait_${trait.toLowerCase()}`, 'number', 0, 4));
+                subGrid.appendChild(createBubbleGroup(trait, `trait_${trait.toLowerCase()}`, 4));
             });
             subSection.appendChild(subGrid);
             section.appendChild(subSection);
@@ -442,10 +557,10 @@
             subTitle.textContent = "👤 Flaws";
             subSection.appendChild(subTitle);
             subGrid = document.createElement('div');
-            subGrid.className = "grid grid-cols-2 gap-x-4 gap-y-2";
+            subGrid.className = "grid grid-cols-2 gap-x-4 gap-y-1";
             const flaws = ['Ego', 'Dull', 'Lazy', 'Volatile', 'Rowdy', 'Careless', 'Clumsy', 'Cruel', 'Paranoid', 'Gullible', 'Spoilt', 'Shy', 'Phobia', 'Chaos'];
             flaws.forEach(flaw => {
-                subGrid.appendChild(createInputGroup(flaw, `flaw_${flaw.toLowerCase()}`, 'number', 0, 6));
+                subGrid.appendChild(createBubbleGroup(flaw, `flaw_${flaw.toLowerCase()}`, 6));
             });
             subSection.appendChild(subGrid);
             section.appendChild(subSection);
@@ -534,9 +649,9 @@
             subSection.appendChild(subTitle);
             subGrid = document.createElement('div');
             subGrid.className = "flex flex-col gap-2";
-            subGrid.appendChild(createInputGroup('Gold (G)', 'caps_g', 'number', 0));
-            subGrid.appendChild(createInputGroup('Silver (S)', 'caps_s', 'number', 0));
-            subGrid.appendChild(createInputGroup('Copper (C)', 'caps_c', 'number', 0));
+            subGrid.appendChild(createInputGroup('Gold (G)', 'caps_g', 'number', 0, 999999));
+            subGrid.appendChild(createInputGroup('Silver (S)', 'caps_s', 'number', 0, 999999));
+            subGrid.appendChild(createInputGroup('Copper (C)', 'caps_c', 'number', 0, 999999));
             subSection.appendChild(subGrid);
             section.appendChild(subSection);
             formInner.appendChild(section);
@@ -599,5 +714,6 @@
 
 </body>
 </html>
+
 
 
