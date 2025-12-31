@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DewDrops Character Sheet</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        window.firebaseModules = {
+            initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged,
+            getFirestore, collection, doc, setDoc, onSnapshot, serverTimestamp
+        };
+    </script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Lato:wght@400;700&display=swap');
+        
+        body {
+            font-family: 'Lato', sans-serif;
+            background-color: #f3f4f6;
+        }
+        
+        .font-header {
+            font-family: 'Cinzel', serif;
+        }
+
+        .dot {
+            transition: all 0.2s ease;
+        }
+        .dot:hover {
+            transform: scale(1.2);
+            cursor: pointer;
+        }
+        
+        /* Parchment effect */
+        .parchment {
+            background-color: #fdfbf7;
+            background-image: url("data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.6' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100' height='100' filter='url(%23noise)' opacity='0.05'/%3E%3C/svg%3E");
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+
+        /* Custom scrollbar for textareas */
+        textarea::-webkit-scrollbar {
+            width: 8px;
+        }
+        textarea::-webkit-scrollbar-track {
+            background: rgba(0,0,0,0.05); 
+        }
+        textarea::-webkit-scrollbar-thumb {
+            background: rgba(0,0,0,0.2); 
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        const { useState, useEffect, useMemo, useCallback } = React;
+        const { Circle, Save, Search, User, Shield, Skull, Scroll, Sword, Sparkles, Coins, ArrowLeft, Loader2 } = lucide;
+
+        // Firebase Initialization
+        const firebaseConfig = JSON.parse(window.__firebase_config || '{}');
+        const app = window.firebaseModules.initializeApp(firebaseConfig);
+        const auth = window.firebaseModules.getAuth(app);
+        const db = window.firebaseModules.getFirestore(app);
+        const appId = window.__app_id || 'dewdrops-default';
+
+        // --- Components ---
+
+        // A single interactive dot row (e.g., Strength: ●●●○○)
+        const StatDots = ({ label, value, max, onChange, color = "text-slate-800" }) => {
+            return (
+                <div className="flex items-center justify-between py-1 border-b border-slate-200/50 hover:bg-slate-50 transition-colors">
+                    <span className="font-bold text-sm text-slate-700 uppercase tracking-wide truncate pr-2">{label}</span>
+                    <div className="flex gap-1 flex-shrink-0">
+                        {[...Array(max)].map((_, i) => (
+                            <div 
+                                key={i}
+                                onClick={() => onChange(i + 1 === value ? 0 : i + 1)} // Toggle off if clicking current value
+                                className={`dot w-3.5 h-3.5 md:w-4 md:h-4 rounded-full border border-slate-400 flex items-center justify-center ${i < value ? `bg-slate-800 ${color}` : 'bg-transparent'}`}
+                            >
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        const SectionHeader = ({ icon: Icon, title, sub }) => (
+            <div className="flex items-center gap-2 mb-4 border-b-2 border-slate-800 pb-2 mt-6">
+                <Icon className="w-5 h-5 md:w-6 md:h-6 text-slate-800" />
+                <h2 className="text-lg md:text-xl font-header font-bold text-slate-900">{title}</h2>
+                {sub && <span className="ml-auto text-xs text-slate-500 italic">{sub}</span>}
+            </div>
+        );
+
+        const InputField = ({ label, value, onChange, placeholder, type = "text" }) => (
+            <div className="flex flex-col gap-1 w-full">
+                <label className="text-xs font-bold uppercase text-slate-500">{label}</label>
+                <input 
+                    type={type} 
+                    value={value || ''} 
+                    onChange={(e) => onChange(e.target.value)}
+                    placeholder={placeholder}
+                    className="w-full bg-transparent border-b border-slate-400 focus:border-slate-800 outline-none py-1 px-1 font-serif text-slate-800 transition-colors"
+                />
+            </div>
+        );
+
+        // --- Main App ---
+
+        const App = () => {
+            const [user, setUser] = useState(null);
+            const [view, setView] = useState('search'); // 'search' or 'sheet'
+            const [searchTerm, setSearchTerm] = useState('');
+            const [characterList, setCharacterList] = useState([]);
+            const [activeChar, setActiveChar] = useState(null);
+            const [saving, setSaving] = useState(false);
+            const [loadingList, setLoadingList] = useState(true);
+
+            // 1. Auth & Data Loading
+            useEffect(() => {
+                const initAuth = async () => {
+                    if (window.__initial_auth_token) {
+                        await window.firebaseModules.signInWithCustomToken(auth, window.__initial_auth_token);
+                    } else {
+                        await window.firebaseModules.signInAnonymously(auth);
+                    }
+                };
+                initAuth();
+                const unsubscribe = window.firebaseModules.onAuthStateChanged(auth, setUser);
+                return () => unsubscribe();
+            }, []);
+
+            // 2. Fetch Character List (Real-time)
+            useEffect(() => {
+                if (!user) return;
+                
+                // Using PUBLIC collection so anyone can find characters by name (Game Table Logic)
+                const colRef = window.firebaseModules.collection(db, 'artifacts', appId, 'public', 'data', 'dewdrops_characters');
+                
+                const unsubscribe = window.firebaseModules.onSnapshot(colRef, (snapshot) => {
+                    const chars = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    // Sort alphabetically by name
+                    chars.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+                    setCharacterList(chars);
+                    setLoadingList(false);
+                }, (err) => {
+                    console.error("Data fetch error:", err);
+                    setLoadingList(false);
+                });
+
+                return () => unsubscribe();
+            }, [user]);
+
+            // 3. Handlers
+            const handleSearchSubmit = (e) => {
+                e.preventDefault();
+                if (!searchTerm.trim()) return;
+
+                const normalize = (str) => str.toLowerCase().trim();
+                const found = characterList.find(c => normalize(c.name) === normalize(searchTerm));
+
+                if (found) {
+                    setActiveChar(found);
+                    setView('sheet');
+                } else {
+                    // Create New Character Template
+                    const newChar = {
+                        id: searchTerm.trim().replace(/\s+/g, '_').toLowerCase() + '_' + Date.now(), // Unique ID based on name + timestamp
+                        name: searchTerm.trim(),
+                        race: '',
+                        age: '',
+                        attributes: {
+                            STR: 1, INT: 1, AGI: 1,
+                            FORT: 1, WIT: 1, PERC: 1,
+                            PRES: 1, MAG: 1, CHAR: 1
+                        },
+                        background: '',
+                        reputation: { current: 0, max: 0 },
+                        awards: '',
+                        exp: 0,
+                        traits: {
+                            Melee: 0, Projectile: 0, Athletics: 0, Medicine: 0, Drive: 0,
+                            Craft: 0, Mechanics: 0, Empathy: 0, Stealth: 0, Streetwise: 0,
+                            Survival: 0, Perform: 0, Brave: 0, Luck: 0
+                        },
+                        flaws: {
+                            Ego: 0, Dull: 0, Lazy: 0, Volatile: 0, Rowdy: 0,
+                            Careless: 0, Clumsy: 0, Cruel: 0, Paranoid: 0,
+                            Gullible: 0, Spoilt: 0, Shy: 0, Phobia: 0, Chaos: 0
+                        },
+                        magic: { alignment: '', mastery: '', spells: ['', '', '', ''] },
+                        equipment: Array(6).fill({ type: '', name: '', effect: '' }),
+                        caps: { g: 0, s: 0, c: 0 },
+                        createdAt: window.firebaseModules.serverTimestamp()
+                    };
+                    setActiveChar(newChar);
+                    setView('sheet');
+                    saveCharacter(newChar);
+                }
+            };
+
+            const saveCharacter = async (charData) => {
+                if (!user || !charData) return;
+                setSaving(true);
+                try {
+                    const docRef = window.firebaseModules.doc(db, 'artifacts', appId, 'public', 'data', 'dewdrops_characters', charData.id);
+                    await window.firebaseModules.setDoc(docRef, charData, { merge: true });
+                } catch (e) {
+                    console.error("Save error:", e);
+                }
+                setSaving(false);
+            };
+
+            // Debounce save for text inputs, immediate for dots
+            const updateChar = (field, value, nestedKey = null, subKey = null, immediate = false) => {
+                setActiveChar(prev => {
+                    const newState = { ...prev };
+                    if (nestedKey && subKey !== null) {
+                         // e.g. equipment array updates
+                        newState[nestedKey] = [...prev[nestedKey]];
+                        newState[nestedKey][subKey] = { ...newState[nestedKey][subKey], ...value };
+                    } else if (nestedKey) {
+                        // e.g. attributes.STR
+                        newState[nestedKey] = { ...prev[nestedKey], [field]: value };
+                    } else {
+                        // e.g. name
+                        newState[field] = value;
+                    }
+                    
+                    if (immediate) {
+                        saveCharacter(newState);
+                    } else {
+                        // Simple debounce simulation: save active state after small delay is handled by UI, 
+                        // but here we just trigger save. In a full app we'd use a real debounce hook.
+                        // For simplicity in this file, we'll save on every change but acknowledge it might be frequent.
+                        saveCharacter(newState);
+                    }
+                    return newState;
+                });
+            };
+
+            // --- Render Views ---
+
+            if (view === 'search') {
+                return (
+                    <div className="min-h-screen flex items-center justify-center p-4">
+                        <div className="max-w-md w-full parchment p-8 rounded-lg shadow-xl border-t-8 border-slate-800">
+                            <div className="text-center mb-8">
+                                <h1 className="font-header text-4xl font-bold text-slate-900 mb-2">DewDrops</h1>
+                                <p className="text-slate-600">Tabletop RPG Character Manager</p>
+                            </div>
+                            
+                            <form onSubmit={handleSearchSubmit} className="space-y-4">
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-2 uppercase tracking-wider">Open Character</label>
+                                    <div className="flex gap-2">
+                                        <input 
+                                            type="text" 
+                                            value={searchTerm}
+                                            onChange={(e) => setSearchTerm(e.target.value)}
+                                            className="flex-1 p-3 border border-slate-300 rounded focus:border-slate-800 outline-none bg-white/50"
+                                            placeholder="Enter Name..."
+                                            autoFocus
+                                        />
+                                        <button 
+                                            type="submit"
+                                            className="bg-slate-800 text-white px-4 md:px-6 py-3 rounded hover:bg-slate-700 transition font-bold flex items-center gap-2 whitespace-nowrap"
+                                        >
+                                            <Search size={18} />
+                                            Open
+                                        </button>
+                                    </div>
+                                    <p className="text-xs text-slate-500 mt-2">
+                                        *If the name doesn't exist, a new sheet is created.
+                                    </p>
+                                </div>
+                            </form>
+
+                            <div className="mt-8 border-t border-slate-200 pt-4">
+                                <h3 className="text-sm font-bold text-slate-500 uppercase mb-3 flex items-center gap-2">
+                                    Archive 
+                                    {loadingList && <Loader2 size={14} className="animate-spin"/>}
+                                </h3>
+                                <div className="space-y-2 max-h-48 overflow-y-auto pr-2">
+                                    {!loadingList && characterList.length === 0 ? (
+                                        <p className="text-sm text-slate-400 italic">No records found.</p>
+                                    ) : (
+                                        characterList.map(c => (
+                                            <button 
+                                                key={c.id} 
+                                                onClick={() => { setActiveChar(c); setView('sheet'); }}
+                                                className="w-full text-left p-2 hover:bg-slate-100 rounded text-slate-800 flex items-center justify-between group transition-colors border border-transparent hover:border-slate-200"
+                                            >
+                                                <span className="font-serif font-bold truncate">{c.name}</span>
+                                                <span className="text-xs text-slate-400 group-hover:text-slate-600 shrink-0 ml-2">{c.race || '-'}</span>
+                                            </button>
+                                        ))
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            // --- SHEET VIEW ---
+            return (
+                <div className="min-h-screen p-2 md:p-8 flex justify-center">
+                    <div className="max-w-6xl w-full parchment shadow-2xl rounded-lg p-4 md:p-10 relative">
+                        
+                        {/* Toolbar */}
+                        <div className="flex justify-between items-center mb-6 border-b-4 border-slate-900 pb-4">
+                            <button 
+                                onClick={() => setView('search')} 
+                                className="bg-slate-800 text-white px-3 py-2 rounded hover:bg-slate-700 transition flex items-center gap-2 text-sm font-bold"
+                            >
+                                <ArrowLeft size={16} /> Back
+                            </button>
+                            
+                            <h1 className="font-header text-2xl md:text-4xl font-bold text-slate-900 text-center flex-1 mx-4 hidden md:block">Character Sheet</h1>
+                            
+                            <span className={`text-xs font-bold uppercase py-1 px-3 rounded-full flex items-center gap-1 transition-all ${saving ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'}`}>
+                                {saving ? <><Loader2 size={12} className="animate-spin"/> Saving</> : 'Saved'}
+                            </span>
+                        </div>
+                        
+                        {/* Mobile Header Title */}
+                        <h1 className="font-header text-3xl font-bold text-slate-900 mb-6 text-center md:hidden">Character Sheet</h1>
+
+                        {/* Basic Info */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8 bg-white/40 p-4 rounded border border-slate-200">
+                            <InputField label="Name" value={activeChar.name} onChange={(v) => updateChar('name', v)} />
+                            <InputField label="Race / Clan" value={activeChar.race} onChange={(v) => updateChar('race', v)} />
+                            <InputField label="Age" value={activeChar.age} onChange={(v) => updateChar('age', v)} />
+                        </div>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                            
+                            {/* Column 1: Attributes & Background */}
+                            <div className="space-y-6">
+                                <div className="bg-white/30 p-4 rounded-lg border border-slate-200/50">
+                                    <SectionHeader icon={User} title="Attributes" sub="+2 + Age/4" />
+                                    <div className="space-y-1">
+                                        {Object.keys(activeChar.attributes).map(attr => (
+                                            <StatDots 
+                                                key={attr} 
+                                                label={attr} 
+                                                value={activeChar.attributes[attr]} 
+                                                max={5} 
+                                                onChange={(v) => updateChar(attr, v, 'attributes', null, true)} 
+                                            />
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div className="bg-white/30 p-4 rounded-lg border border-slate-200/50">
+                                    <SectionHeader icon={Scroll} title="Background" />
+                                    <textarea 
+                                        className="w-full bg-transparent border border-slate-300 rounded p-2 h-32 text-sm resize-none focus:border-slate-800 outline-none"
+                                        placeholder="History..."
+                                        value={activeChar.background}
+                                        onChange={(e) => updateChar('background', e.target.value)}
+                                    />
+                                    <div className="mt-4 space-y-4">
+                                        <InputField label="Awards" value={activeChar.awards} onChange={(v) => updateChar('awards', v)} />
+                                        <div className="flex gap-4">
+                                            <InputField label="Reputation" value={activeChar.reputation?.current} onChange={(v) => updateChar('current', v, 'reputation')} />
+                                            <InputField label="EXP" value={activeChar.exp} onChange={(v) => updateChar('exp', v)} />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Column 2: Traits & Flaws */}
+                            <div className="space-y-6">
+                                <div className="bg-white/30 p-4 rounded-lg border border-slate-200/50">
+                                    <SectionHeader icon={Shield} title="Traits" sub="INT + 2" />
+                                    <div className="space-y-1">
+                                        {Object.keys(activeChar.traits).map(trait => (
+                                            <StatDots 
+                                                key={trait} 
+                                                label={trait} 
+                                                value={activeChar.traits[trait]} 
+                                                max={4} 
+                                                onChange={(v) => updateChar(trait, v, 'traits', null, true)} 
+                                                color="text-blue-800"
+                                            />
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div className="bg-red-50/50 p-4 rounded-lg border border-red-100">
+                                    <SectionHeader icon={Skull} title="Flaws" sub="½INT + 4" />
+                                    <div className="space-y-1">
+                                        {Object.keys(activeChar.flaws).map(flaw => (
+                                            <StatDots 
+                                                key={flaw} 
+                                                label={flaw} 
+                                                value={activeChar.flaws[flaw]} 
+                                                max={6} 
+                                                onChange={(v) => updateChar(flaw, v, 'flaws', null, true)}
+                                                color="text-red-800"
+                                            />
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Column 3: Magic, Equipment, Caps */}
+                            <div className="space-y-6">
+                                <div className="bg-white/30 p-4 rounded-lg border border-slate-200/50">
+                                    <SectionHeader icon={Sparkles} title="Magic" />
+                                    <div className="grid grid-cols-2 gap-4 mb-4">
+                                        <InputField label="Alignment" value={activeChar.magic.alignment} onChange={(v) => updateChar('alignment', v, 'magic')} />
+                                        <InputField label="Mastery" value={activeChar.magic.mastery} onChange={(v) => updateChar('mastery', v, 'magic')} />
+                                    </div>
+                                    <label className="text-xs font-bold uppercase text-slate-500 mb-1 block">Spells</label>
+                                    <div className="space-y-2">
+                                        {activeChar.magic.spells.map((spell, i) => (
+                                            <input 
+                                                key={i}
+                                                type="text" 
+                                                value={spell}
+                                                onChange={(e) => {
+                                                    const newSpells = [...activeChar.magic.spells];
+                                                    newSpells[i] = e.target.value;
+                                                    updateChar('spells', newSpells, 'magic');
+                                                }}
+                                                className="w-full bg-transparent border-b border-slate-300 text-sm py-1 focus:border-slate-800 outline-none"
+                                                placeholder={`Spell ${i + 1}`}
+                                            />
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div className="bg-white/30 p-4 rounded-lg border border-slate-200/50">
+                                    <SectionHeader icon={Sword} title="Equipment" />
+                                    <div className="overflow-x-auto rounded border border-slate-300">
+                                        <table className="w-full text-left text-sm min-w-[300px]">
+                                            <thead className="bg-slate-200 text-slate-700 text-xs uppercase">
+                                                <tr>
+                                                    <th className="p-2 w-1/4">Type</th>
+                                                    <th className="p-2 w-1/4">Name</th>
+                                                    <th className="p-2 w-1/2">Effect</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {activeChar.equipment.map((item, i) => (
+                                                    <tr key={i} className="border-t border-slate-200">
+                                                        <td className="p-1"><input className="w-full bg-transparent outline-none p-1" value={item.type} onChange={(e) => updateChar({ type: e.target.value }, null, 'equipment', i)} placeholder="-" /></td>
+                                                        <td className="p-1"><input className="w-full bg-transparent outline-none p-1" value={item.name} onChange={(e) => updateChar({ name: e.target.value }, null, 'equipment', i)} placeholder="-" /></td>
+                                                        <td className="p-1"><input className="w-full bg-transparent outline-none p-1" value={item.effect} onChange={(e) => updateChar({ effect: e.target.value }, null, 'equipment', i)} placeholder="-" /></td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+
+                                <div className="bg-white/30 p-4 rounded-lg border border-slate-200/50">
+                                    <SectionHeader icon={Coins} title="Caps" />
+                                    <div className="flex gap-4 items-end">
+                                        <div className="flex-1 text-center">
+                                            <span className="text-xs text-yellow-600 font-bold block mb-1">Gold</span>
+                                            <input type="number" className="w-full text-center bg-transparent border-b border-yellow-400 font-bold text-slate-800 text-lg" value={activeChar.caps.g} onChange={(e) => updateChar('g', e.target.value, 'caps')} />
+                                        </div>
+                                        <div className="flex-1 text-center">
+                                            <span className="text-xs text-slate-400 font-bold block mb-1">Silver</span>
+                                            <input type="number" className="w-full text-center bg-transparent border-b border-slate-400 font-bold text-slate-800 text-lg" value={activeChar.caps.s} onChange={(e) => updateChar('s', e.target.value, 'caps')} />
+                                        </div>
+                                        <div className="flex-1 text-center">
+                                            <span className="text-xs text-orange-600 font-bold block mb-1">Copper</span>
+                                            <input type="number" className="w-full text-center bg-transparent border-b border-orange-600 font-bold text-slate-800 text-lg" value={activeChar.caps.c} onChange={(e) => updateChar('c', e.target.value, 'caps')} />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="mt-4 p-4 border border-slate-300 rounded bg-slate-800 text-white">
+                                    <h4 className="font-bold text-sm mb-2 flex items-center gap-2">
+                                        <Sparkles size={14}/> Mechanics Reference
+                                    </h4>
+                                    <div className="space-y-1 text-xs text-slate-300">
+                                        <p>
+                                            <span className="text-white font-bold">Check:</span> (Stat + Trait) - 10 = Target
+                                        </p>
+                                        <p>
+                                            <span className="text-white font-bold">Success:</span> Roll over Target on D20.
+                                        </p>
+                                        <p>
+                                            <span className="text-white font-bold">Flaws:</span> Reduce Success Range.
+                                        </p>
+                                        <p className="border-t border-slate-600 pt-1 mt-1 flex justify-between">
+                                            <span>Crit: 10</span>
+                                            <span>Over/Under: 20 / 1</span>
+                                        </p>
+                                    </div>
+                                </div>
+
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
