@@ -48,6 +48,17 @@
             background-image: url("data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.6' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100' height='100' filter='url(%23noise)' opacity='0.05'/%3E%3C/svg%3E");
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
         }
+        
+        /* Modal Animation */
+        .modal-enter {
+            opacity: 0;
+            transform: scale(0.9);
+        }
+        .modal-enter-active {
+            opacity: 1;
+            transform: scale(1);
+            transition: opacity 200ms, transform 200ms;
+        }
 
         /* Custom scrollbar for textareas */
         textarea::-webkit-scrollbar {
@@ -66,36 +77,107 @@
     <div id="root"></div>
 
     <script type="text/babel" data-type="module">
-        const { useState, useEffect, useMemo, useCallback } = React;
-        const { Circle, Save, Search, User, Shield, Skull, Scroll, Sword, Sparkles, Coins, ArrowLeft, Loader2 } = lucide;
+        const { useState, useEffect, useRef } = React;
+        const { Circle, Save, Search, User, Shield, Skull, Scroll, Sword, Sparkles, Coins, ArrowLeft, Loader2, Dices, AlertTriangle, CloudOff, Wifi } = lucide;
 
-        // Firebase Initialization
-        const firebaseConfig = JSON.parse(window.__firebase_config || '{}');
-        const app = window.firebaseModules.initializeApp(firebaseConfig);
-        const auth = window.firebaseModules.getAuth(app);
-        const db = window.firebaseModules.getFirestore(app);
-        const appId = window.__app_id || 'dewdrops-default';
+        // --- Data Service Abstraction (Handles "Outright" functionality via Mock or Firebase) ---
+        class DataService {
+            constructor() {
+                this.type = 'offline'; // Default to offline
+                this.db = null;
+                this.auth = null;
+                this.appId = 'dewdrops-default';
+            }
 
-        // --- Components ---
+            async init() {
+                try {
+                    const configStr = window.__firebase_config;
+                    if (configStr) {
+                        const firebaseConfig = JSON.parse(configStr);
+                        const app = window.firebaseModules.initializeApp(firebaseConfig);
+                        this.auth = window.firebaseModules.getAuth(app);
+                        this.db = window.firebaseModules.getFirestore(app);
+                        this.appId = window.__app_id || 'dewdrops-default';
+                        
+                        // Auth Flow
+                        if (window.__initial_auth_token) {
+                            await window.firebaseModules.signInWithCustomToken(this.auth, window.__initial_auth_token);
+                        } else {
+                            await window.firebaseModules.signInAnonymously(this.auth);
+                        }
+                        this.type = 'online';
+                        return true;
+                    }
+                } catch (e) {
+                    console.warn("Firebase Init Failed, switching to Offline Mode:", e);
+                }
+                this.type = 'offline';
+                return false;
+            }
 
-        // A single interactive dot row (e.g., Strength: ●●●○○)
-        const StatDots = ({ label, value, max, onChange, color = "text-slate-800" }) => {
-            return (
-                <div className="flex items-center justify-between py-1 border-b border-slate-200/50 hover:bg-slate-50 transition-colors">
-                    <span className="font-bold text-sm text-slate-700 uppercase tracking-wide truncate pr-2">{label}</span>
-                    <div className="flex gap-1 flex-shrink-0">
-                        {[...Array(max)].map((_, i) => (
-                            <div 
-                                key={i}
-                                onClick={() => onChange(i + 1 === value ? 0 : i + 1)} // Toggle off if clicking current value
-                                className={`dot w-3.5 h-3.5 md:w-4 md:h-4 rounded-full border border-slate-400 flex items-center justify-center ${i < value ? `bg-slate-800 ${color}` : 'bg-transparent'}`}
-                            >
-                            </div>
-                        ))}
-                    </div>
+            // Subscribe to character list
+            subscribeList(callback) {
+                if (this.type === 'online' && this.db) {
+                    const colRef = window.firebaseModules.collection(this.db, 'artifacts', this.appId, 'public', 'data', 'dewdrops_characters');
+                    return window.firebaseModules.onSnapshot(colRef, (snapshot) => {
+                        const chars = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                        chars.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+                        callback(chars);
+                    }, (err) => console.error("Snapshot error", err));
+                } else {
+                    // Offline Mock
+                    const loadLocal = () => {
+                        try {
+                            const raw = localStorage.getItem('dewdrops_local_chars');
+                            const chars = raw ? JSON.parse(raw) : [];
+                            chars.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+                            callback(chars);
+                        } catch(e) { callback([]); }
+                    };
+                    loadLocal();
+                    // Poll for changes in other tabs? Nah, simple is fine.
+                    return () => {};
+                }
+            }
+
+            // Save Character
+            async saveCharacter(charData) {
+                if (this.type === 'online' && this.db) {
+                    const docRef = window.firebaseModules.doc(this.db, 'artifacts', this.appId, 'public', 'data', 'dewdrops_characters', charData.id);
+                    await window.firebaseModules.setDoc(docRef, charData, { merge: true });
+                } else {
+                    // Offline Mock
+                    const raw = localStorage.getItem('dewdrops_local_chars');
+                    let chars = raw ? JSON.parse(raw) : [];
+                    const idx = chars.findIndex(c => c.id === charData.id);
+                    if (idx >= 0) chars[idx] = charData;
+                    else chars.push(charData);
+                    localStorage.setItem('dewdrops_local_chars', JSON.stringify(chars));
+                    // Simulate network delay
+                    await new Promise(r => setTimeout(r, 500));
+                }
+            }
+        }
+
+        const dataService = new DataService();
+
+        // --- UI Components ---
+
+        const StatDots = ({ label, value, max, onChange, color = "text-slate-800" }) => (
+            <div className="flex items-center justify-between py-1 border-b border-slate-200/50 hover:bg-slate-50 transition-colors">
+                <span className="font-bold text-sm text-slate-700 uppercase tracking-wide truncate pr-2">{label}</span>
+                <div className="flex gap-1 flex-shrink-0">
+                    {[...Array(max)].map((_, i) => (
+                        <div 
+                            key={i}
+                            onClick={() => onChange(i + 1 === value ? 0 : i + 1)}
+                            className={`dot w-3.5 h-3.5 md:w-4 md:h-4 rounded-full border border-slate-400 flex items-center justify-center ${i < value ? `bg-slate-800 ${color}` : 'bg-transparent'}`}
+                        >
+                        </div>
+                    ))}
                 </div>
-            );
-        };
+            </div>
+        );
 
         const SectionHeader = ({ icon: Icon, title, sub }) => (
             <div className="flex items-center gap-2 mb-4 border-b-2 border-slate-800 pb-2 mt-6">
@@ -118,53 +200,120 @@
             </div>
         );
 
+        // --- Dice Roller Modal ---
+        const DiceRoller = ({ isOpen, onClose, charData }) => {
+            if (!isOpen) return null;
+
+            const [selectedStat, setSelectedStat] = useState('');
+            const [selectedTrait, setSelectedTrait] = useState('');
+            const [selectedFlaw, setSelectedFlaw] = useState('');
+            const [rollResult, setRollResult] = useState(null);
+
+            const calculateOutcome = () => {
+                const statVal = selectedStat ? (charData.attributes[selectedStat] || 0) : 0;
+                const traitVal = selectedTrait ? (charData.traits[selectedTrait] || 0) : 0;
+                const flawVal = selectedFlaw ? (charData.flaws[selectedFlaw] || 0) : 0;
+                
+                // Mechanics: Center 10. Range = Stat + Trait - Flaw
+                const rangeMod = (statVal + traitVal) - flawVal;
+                // Min/Max success range around 10
+                const minSuccess = 10 - rangeMod;
+                const maxSuccess = 10 + rangeMod;
+                
+                const roll = Math.floor(Math.random() * 20) + 1;
+                
+                let outcome = '';
+                let type = '';
+
+                if (roll === 10) {
+                    outcome = "CRITICAL SUCCESS";
+                    type = "text-yellow-600 font-black animate-pulse";
+                } else if (roll === 1) {
+                    outcome = "UNDER ACTION (Crit Fail)";
+                    type = "text-red-600 font-bold";
+                } else if (roll === 20) {
+                    outcome = "OVER ACTION (Chaos/Fail)";
+                    type = "text-orange-600 font-bold";
+                } else if (roll >= minSuccess && roll <= maxSuccess) {
+                    outcome = "SUCCESS";
+                    type = "text-green-700 font-bold";
+                } else {
+                    outcome = "FAILURE";
+                    type = "text-slate-500";
+                }
+
+                setRollResult({
+                    roll,
+                    outcome,
+                    type,
+                    details: `Range: ${minSuccess}-${maxSuccess} (Base 10 ± ${rangeMod})`
+                });
+            };
+
+            return (
+                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+                    <div className="bg-[#fdfbf7] p-6 rounded-lg shadow-2xl max-w-sm w-full border-4 border-slate-800" onClick={e => e.stopPropagation()}>
+                        <h3 className="font-header text-xl font-bold mb-4 flex items-center gap-2"><Dices /> Mechanic Tester</h3>
+                        
+                        <div className="space-y-3 mb-6">
+                            <select className="w-full p-2 bg-slate-100 border rounded" value={selectedStat} onChange={e => setSelectedStat(e.target.value)}>
+                                <option value="">Select Attribute (Base)</option>
+                                {Object.keys(charData.attributes).map(k => <option key={k} value={k}>{k} ({charData.attributes[k]})</option>)}
+                            </select>
+                            <select className="w-full p-2 bg-slate-100 border rounded" value={selectedTrait} onChange={e => setSelectedTrait(e.target.value)}>
+                                <option value="">Select Trait (Add)</option>
+                                {Object.keys(charData.traits).map(k => <option key={k} value={k}>{k} ({charData.traits[k]})</option>)}
+                            </select>
+                            <select className="w-full p-2 bg-red-50 border border-red-200 rounded text-red-800" value={selectedFlaw} onChange={e => setSelectedFlaw(e.target.value)}>
+                                <option value="">Select Flaw (Reduce)</option>
+                                {Object.keys(charData.flaws).map(k => <option key={k} value={k}>{k} ({charData.flaws[k]})</option>)}
+                            </select>
+                        </div>
+
+                        <button onClick={calculateOutcome} className="w-full bg-slate-900 text-white py-3 rounded font-bold hover:bg-slate-700 transition">
+                            ROLL D20
+                        </button>
+
+                        {rollResult && (
+                            <div className="mt-6 text-center border-t-2 border-slate-200 pt-4">
+                                <div className="text-5xl font-header font-bold text-slate-800 mb-2">{rollResult.roll}</div>
+                                <div className={`text-lg uppercase tracking-wider ${rollResult.type}`}>{rollResult.outcome}</div>
+                                <div className="text-xs text-slate-400 mt-1">{rollResult.details}</div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
         // --- Main App ---
 
         const App = () => {
-            const [user, setUser] = useState(null);
-            const [view, setView] = useState('search'); // 'search' or 'sheet'
+            const [view, setView] = useState('search');
             const [searchTerm, setSearchTerm] = useState('');
             const [characterList, setCharacterList] = useState([]);
             const [activeChar, setActiveChar] = useState(null);
             const [saving, setSaving] = useState(false);
             const [loadingList, setLoadingList] = useState(true);
+            const [connectionType, setConnectionType] = useState('offline');
+            const [showDiceModal, setShowDiceModal] = useState(false);
 
-            // 1. Auth & Data Loading
+            // Init
             useEffect(() => {
-                const initAuth = async () => {
-                    if (window.__initial_auth_token) {
-                        await window.firebaseModules.signInWithCustomToken(auth, window.__initial_auth_token);
-                    } else {
-                        await window.firebaseModules.signInAnonymously(auth);
-                    }
+                const init = async () => {
+                    await dataService.init();
+                    setConnectionType(dataService.type);
+                    
+                    const unsubscribe = dataService.subscribeList((chars) => {
+                        setCharacterList(chars);
+                        setLoadingList(false);
+                    });
+                    return unsubscribe;
                 };
-                initAuth();
-                const unsubscribe = window.firebaseModules.onAuthStateChanged(auth, setUser);
-                return () => unsubscribe();
+                init();
             }, []);
 
-            // 2. Fetch Character List (Real-time)
-            useEffect(() => {
-                if (!user) return;
-                
-                // Using PUBLIC collection so anyone can find characters by name (Game Table Logic)
-                const colRef = window.firebaseModules.collection(db, 'artifacts', appId, 'public', 'data', 'dewdrops_characters');
-                
-                const unsubscribe = window.firebaseModules.onSnapshot(colRef, (snapshot) => {
-                    const chars = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    // Sort alphabetically by name
-                    chars.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-                    setCharacterList(chars);
-                    setLoadingList(false);
-                }, (err) => {
-                    console.error("Data fetch error:", err);
-                    setLoadingList(false);
-                });
-
-                return () => unsubscribe();
-            }, [user]);
-
-            // 3. Handlers
+            // Handlers
             const handleSearchSubmit = (e) => {
                 e.preventDefault();
                 if (!searchTerm.trim()) return;
@@ -176,9 +325,8 @@
                     setActiveChar(found);
                     setView('sheet');
                 } else {
-                    // Create New Character Template
                     const newChar = {
-                        id: searchTerm.trim().replace(/\s+/g, '_').toLowerCase() + '_' + Date.now(), // Unique ID based on name + timestamp
+                        id: searchTerm.trim().replace(/\s+/g, '_').toLowerCase() + '_' + Date.now(),
                         name: searchTerm.trim(),
                         race: '',
                         age: '',
@@ -204,7 +352,7 @@
                         magic: { alignment: '', mastery: '', spells: ['', '', '', ''] },
                         equipment: Array(6).fill({ type: '', name: '', effect: '' }),
                         caps: { g: 0, s: 0, c: 0 },
-                        createdAt: window.firebaseModules.serverTimestamp()
+                        createdAt: Date.now()
                     };
                     setActiveChar(newChar);
                     setView('sheet');
@@ -213,51 +361,38 @@
             };
 
             const saveCharacter = async (charData) => {
-                if (!user || !charData) return;
+                if (!charData) return;
                 setSaving(true);
-                try {
-                    const docRef = window.firebaseModules.doc(db, 'artifacts', appId, 'public', 'data', 'dewdrops_characters', charData.id);
-                    await window.firebaseModules.setDoc(docRef, charData, { merge: true });
-                } catch (e) {
-                    console.error("Save error:", e);
-                }
+                await dataService.saveCharacter(charData);
                 setSaving(false);
             };
 
-            // Debounce save for text inputs, immediate for dots
             const updateChar = (field, value, nestedKey = null, subKey = null, immediate = false) => {
                 setActiveChar(prev => {
                     const newState = { ...prev };
                     if (nestedKey && subKey !== null) {
-                         // e.g. equipment array updates
                         newState[nestedKey] = [...prev[nestedKey]];
                         newState[nestedKey][subKey] = { ...newState[nestedKey][subKey], ...value };
                     } else if (nestedKey) {
-                        // e.g. attributes.STR
                         newState[nestedKey] = { ...prev[nestedKey], [field]: value };
                     } else {
-                        // e.g. name
                         newState[field] = value;
                     }
-                    
-                    if (immediate) {
-                        saveCharacter(newState);
-                    } else {
-                        // Simple debounce simulation: save active state after small delay is handled by UI, 
-                        // but here we just trigger save. In a full app we'd use a real debounce hook.
-                        // For simplicity in this file, we'll save on every change but acknowledge it might be frequent.
-                        saveCharacter(newState);
-                    }
+                    saveCharacter(newState);
                     return newState;
                 });
             };
 
-            // --- Render Views ---
-
+            // Render Views
             if (view === 'search') {
                 return (
                     <div className="min-h-screen flex items-center justify-center p-4">
-                        <div className="max-w-md w-full parchment p-8 rounded-lg shadow-xl border-t-8 border-slate-800">
+                        <div className="max-w-md w-full parchment p-8 rounded-lg shadow-xl border-t-8 border-slate-800 relative">
+                             <div className="absolute top-2 right-2 text-[10px] uppercase font-bold flex items-center gap-1 text-slate-400">
+                                {connectionType === 'online' ? <Wifi size={10} className="text-green-500"/> : <CloudOff size={10} className="text-slate-500"/>}
+                                {connectionType === 'online' ? 'Live DB' : 'Offline Test Mode'}
+                            </div>
+
                             <div className="text-center mb-8">
                                 <h1 className="font-header text-4xl font-bold text-slate-900 mb-2">DewDrops</h1>
                                 <p className="text-slate-600">Tabletop RPG Character Manager</p>
@@ -296,7 +431,7 @@
                                 </h3>
                                 <div className="space-y-2 max-h-48 overflow-y-auto pr-2">
                                     {!loadingList && characterList.length === 0 ? (
-                                        <p className="text-sm text-slate-400 italic">No records found.</p>
+                                        <p className="text-sm text-slate-400 italic">No records found locally.</p>
                                     ) : (
                                         characterList.map(c => (
                                             <button 
@@ -316,13 +451,12 @@
                 );
             }
 
-            // --- SHEET VIEW ---
             return (
                 <div className="min-h-screen p-2 md:p-8 flex justify-center">
                     <div className="max-w-6xl w-full parchment shadow-2xl rounded-lg p-4 md:p-10 relative">
                         
                         {/* Toolbar */}
-                        <div className="flex justify-between items-center mb-6 border-b-4 border-slate-900 pb-4">
+                        <div className="flex flex-wrap gap-2 justify-between items-center mb-6 border-b-4 border-slate-900 pb-4">
                             <button 
                                 onClick={() => setView('search')} 
                                 className="bg-slate-800 text-white px-3 py-2 rounded hover:bg-slate-700 transition flex items-center gap-2 text-sm font-bold"
@@ -332,12 +466,19 @@
                             
                             <h1 className="font-header text-2xl md:text-4xl font-bold text-slate-900 text-center flex-1 mx-4 hidden md:block">Character Sheet</h1>
                             
-                            <span className={`text-xs font-bold uppercase py-1 px-3 rounded-full flex items-center gap-1 transition-all ${saving ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'}`}>
-                                {saving ? <><Loader2 size={12} className="animate-spin"/> Saving</> : 'Saved'}
-                            </span>
+                            <div className="flex gap-2 items-center">
+                                <button
+                                    onClick={() => setShowDiceModal(true)}
+                                    className="bg-indigo-600 text-white px-3 py-2 rounded hover:bg-indigo-700 transition flex items-center gap-2 text-sm font-bold shadow-lg transform hover:-translate-y-0.5"
+                                >
+                                    <Dices size={16} /> Roll
+                                </button>
+                                <span className={`text-xs font-bold uppercase py-2 px-3 rounded-full flex items-center gap-1 transition-all ${saving ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'}`}>
+                                    {saving ? <><Loader2 size={12} className="animate-spin"/> Saving</> : 'Saved'}
+                                </span>
+                            </div>
                         </div>
                         
-                        {/* Mobile Header Title */}
                         <h1 className="font-header text-3xl font-bold text-slate-900 mb-6 text-center md:hidden">Character Sheet</h1>
 
                         {/* Basic Info */}
@@ -349,7 +490,7 @@
 
                         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                             
-                            {/* Column 1: Attributes & Background */}
+                            {/* Column 1 */}
                             <div className="space-y-6">
                                 <div className="bg-white/30 p-4 rounded-lg border border-slate-200/50">
                                     <SectionHeader icon={User} title="Attributes" sub="+2 + Age/4" />
@@ -384,7 +525,7 @@
                                 </div>
                             </div>
 
-                            {/* Column 2: Traits & Flaws */}
+                            {/* Column 2 */}
                             <div className="space-y-6">
                                 <div className="bg-white/30 p-4 rounded-lg border border-slate-200/50">
                                     <SectionHeader icon={Shield} title="Traits" sub="INT + 2" />
@@ -419,7 +560,7 @@
                                 </div>
                             </div>
 
-                            {/* Column 3: Magic, Equipment, Caps */}
+                            {/* Column 3 */}
                             <div className="space-y-6">
                                 <div className="bg-white/30 p-4 rounded-lg border border-slate-200/50">
                                     <SectionHeader icon={Sparkles} title="Magic" />
@@ -493,24 +634,20 @@
                                         <Sparkles size={14}/> Mechanics Reference
                                     </h4>
                                     <div className="space-y-1 text-xs text-slate-300">
-                                        <p>
-                                            <span className="text-white font-bold">Check:</span> (Stat + Trait) - 10 = Target
-                                        </p>
-                                        <p>
-                                            <span className="text-white font-bold">Success:</span> Roll over Target on D20.
-                                        </p>
-                                        <p>
-                                            <span className="text-white font-bold">Flaws:</span> Reduce Success Range.
-                                        </p>
+                                        <p><span className="text-white font-bold">Goal:</span> Roll inside the Success Range.</p>
+                                        <p><span className="text-white font-bold">Center:</span> 10</p>
+                                        <p><span className="text-white font-bold">Range:</span> 10 ± (Stat + Trait - Flaw)</p>
                                         <p className="border-t border-slate-600 pt-1 mt-1 flex justify-between">
                                             <span>Crit: 10</span>
                                             <span>Over/Under: 20 / 1</span>
                                         </p>
                                     </div>
                                 </div>
-
                             </div>
                         </div>
+
+                        {/* Dice Modal */}
+                        <DiceRoller isOpen={showDiceModal} onClose={() => setShowDiceModal(false)} charData={activeChar} />
 
                     </div>
                 </div>
