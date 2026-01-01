@@ -3,12 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DewDrops Character Sheet TEST</title>
+    <title>DewDrops Character Sheet</title>
+    
+    <!-- Core Libraries -->
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Icons: Using lucide-react specifically for component support -->
+    <script src="https://unpkg.com/lucide-react@0.263.1/dist/umd/lucide-react.min.js"></script>
     
     <!-- Firebase SDKs -->
     <script type="module">
@@ -16,10 +20,13 @@
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, doc, setDoc, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
+        // Attach to window so Babel script can see them
         window.firebaseModules = {
             initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged,
             getFirestore, collection, doc, setDoc, onSnapshot, serverTimestamp
         };
+        // Flag to signal Firebase script has run
+        window.firebaseLoaded = true;
     </script>
     
     <style>
@@ -49,15 +56,18 @@
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
         }
         
-        /* Modal Animation */
-        .modal-enter {
-            opacity: 0;
-            transform: scale(0.9);
+        /* Loading Spinner */
+        .loading-spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #1e293b;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
         }
-        .modal-enter-active {
-            opacity: 1;
-            transform: scale(1);
-            transition: opacity 200ms, transform 200ms;
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
 
         /* Custom scrollbar for textareas */
@@ -74,16 +84,17 @@
     </style>
 </head>
 <body>
-    <div id="root"></div>
+    <div id="root" class="min-h-screen flex items-center justify-center">
+        <div class="loading-spinner"></div>
+    </div>
 
     <script type="text/babel" data-type="module">
         const { useState, useEffect, useRef } = React;
-        const { Circle, Save, Search, User, Shield, Skull, Scroll, Sword, Sparkles, Coins, ArrowLeft, Loader2, Dices, AlertTriangle, CloudOff, Wifi } = lucide;
 
-        // --- Data Service Abstraction (Handles "Outright" functionality via Mock or Firebase) ---
+        // --- Data Service Abstraction ---
         class DataService {
             constructor() {
-                this.type = 'offline'; // Default to offline
+                this.type = 'offline';
                 this.db = null;
                 this.auth = null;
                 this.appId = 'dewdrops-default';
@@ -91,15 +102,16 @@
 
             async init() {
                 try {
-                    const configStr = window.__firebase_config;
-                    if (configStr) {
+                    // Check if window.firebaseModules is ready
+                    if (window.firebaseModules && window.__firebase_config) {
+                        const configStr = window.__firebase_config;
                         const firebaseConfig = JSON.parse(configStr);
+                        
                         const app = window.firebaseModules.initializeApp(firebaseConfig);
                         this.auth = window.firebaseModules.getAuth(app);
                         this.db = window.firebaseModules.getFirestore(app);
                         this.appId = window.__app_id || 'dewdrops-default';
                         
-                        // Auth Flow
                         if (window.__initial_auth_token) {
                             await window.firebaseModules.signInWithCustomToken(this.auth, window.__initial_auth_token);
                         } else {
@@ -109,13 +121,12 @@
                         return true;
                     }
                 } catch (e) {
-                    console.warn("Firebase Init Failed, switching to Offline Mode:", e);
+                    console.warn("Firebase Init Failed/Skipped, switching to Offline Mode:", e);
                 }
                 this.type = 'offline';
                 return false;
             }
 
-            // Subscribe to character list
             subscribeList(callback) {
                 if (this.type === 'online' && this.db) {
                     const colRef = window.firebaseModules.collection(this.db, 'artifacts', this.appId, 'public', 'data', 'dewdrops_characters');
@@ -125,7 +136,6 @@
                         callback(chars);
                     }, (err) => console.error("Snapshot error", err));
                 } else {
-                    // Offline Mock
                     const loadLocal = () => {
                         try {
                             const raw = localStorage.getItem('dewdrops_local_chars');
@@ -135,25 +145,21 @@
                         } catch(e) { callback([]); }
                     };
                     loadLocal();
-                    // Poll for changes in other tabs? Nah, simple is fine.
                     return () => {};
                 }
             }
 
-            // Save Character
             async saveCharacter(charData) {
                 if (this.type === 'online' && this.db) {
                     const docRef = window.firebaseModules.doc(this.db, 'artifacts', this.appId, 'public', 'data', 'dewdrops_characters', charData.id);
                     await window.firebaseModules.setDoc(docRef, charData, { merge: true });
                 } else {
-                    // Offline Mock
                     const raw = localStorage.getItem('dewdrops_local_chars');
                     let chars = raw ? JSON.parse(raw) : [];
                     const idx = chars.findIndex(c => c.id === charData.id);
                     if (idx >= 0) chars[idx] = charData;
                     else chars.push(charData);
                     localStorage.setItem('dewdrops_local_chars', JSON.stringify(chars));
-                    // Simulate network delay
                     await new Promise(r => setTimeout(r, 500));
                 }
             }
@@ -162,7 +168,6 @@
         const dataService = new DataService();
 
         // --- UI Components ---
-
         const StatDots = ({ label, value, max, onChange, color = "text-slate-800" }) => (
             <div className="flex items-center justify-between py-1 border-b border-slate-200/50 hover:bg-slate-50 transition-colors">
                 <span className="font-bold text-sm text-slate-700 uppercase tracking-wide truncate pr-2">{label}</span>
@@ -200,9 +205,10 @@
             </div>
         );
 
-        // --- Dice Roller Modal ---
         const DiceRoller = ({ isOpen, onClose, charData }) => {
             if (!isOpen) return null;
+            // Destructure icons inside component safely
+            const { Dices } = window.lucide; 
 
             const [selectedStat, setSelectedStat] = useState('');
             const [selectedTrait, setSelectedTrait] = useState('');
@@ -214,9 +220,7 @@
                 const traitVal = selectedTrait ? (charData.traits[selectedTrait] || 0) : 0;
                 const flawVal = selectedFlaw ? (charData.flaws[selectedFlaw] || 0) : 0;
                 
-                // Mechanics: Center 10. Range = Stat + Trait - Flaw
                 const rangeMod = (statVal + traitVal) - flawVal;
-                // Min/Max success range around 10
                 const minSuccess = 10 - rangeMod;
                 const maxSuccess = 10 + rangeMod;
                 
@@ -253,7 +257,7 @@
             return (
                 <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
                     <div className="bg-[#fdfbf7] p-6 rounded-lg shadow-2xl max-w-sm w-full border-4 border-slate-800" onClick={e => e.stopPropagation()}>
-                        <h3 className="font-header text-xl font-bold mb-4 flex items-center gap-2"><Dices /> Mechanic Tester</h3>
+                        <h3 className="font-header text-xl font-bold mb-4 flex items-center gap-2"><Dices size={24} /> Mechanic Tester</h3>
                         
                         <div className="space-y-3 mb-6">
                             <select className="w-full p-2 bg-slate-100 border rounded" value={selectedStat} onChange={e => setSelectedStat(e.target.value)}>
@@ -287,8 +291,14 @@
         };
 
         // --- Main App ---
-
         const App = () => {
+            // Safe Destructuring of Icons inside the App component
+            const { 
+                Circle, Save, Search, User, Shield, Skull, Scroll, 
+                Sword, Sparkles, Coins, ArrowLeft, Loader2, Dices, 
+                AlertTriangle, CloudOff, Wifi 
+            } = window.lucide;
+
             const [view, setView] = useState('search');
             const [searchTerm, setSearchTerm] = useState('');
             const [characterList, setCharacterList] = useState([]);
@@ -298,7 +308,6 @@
             const [connectionType, setConnectionType] = useState('offline');
             const [showDiceModal, setShowDiceModal] = useState(false);
 
-            // Init
             useEffect(() => {
                 const init = async () => {
                     await dataService.init();
@@ -313,7 +322,6 @@
                 init();
             }, []);
 
-            // Handlers
             const handleSearchSubmit = (e) => {
                 e.preventDefault();
                 if (!searchTerm.trim()) return;
@@ -367,7 +375,7 @@
                 setSaving(false);
             };
 
-            const updateChar = (field, value, nestedKey = null, subKey = null, immediate = false) => {
+            const updateChar = (field, value, nestedKey = null, subKey = null) => {
                 setActiveChar(prev => {
                     const newState = { ...prev };
                     if (nestedKey && subKey !== null) {
@@ -489,7 +497,6 @@
                         </div>
 
                         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                            
                             {/* Column 1 */}
                             <div className="space-y-6">
                                 <div className="bg-white/30 p-4 rounded-lg border border-slate-200/50">
@@ -501,7 +508,7 @@
                                                 label={attr} 
                                                 value={activeChar.attributes[attr]} 
                                                 max={5} 
-                                                onChange={(v) => updateChar(attr, v, 'attributes', null, true)} 
+                                                onChange={(v) => updateChar(attr, v, 'attributes')} 
                                             />
                                         ))}
                                     </div>
@@ -536,7 +543,7 @@
                                                 label={trait} 
                                                 value={activeChar.traits[trait]} 
                                                 max={4} 
-                                                onChange={(v) => updateChar(trait, v, 'traits', null, true)} 
+                                                onChange={(v) => updateChar(trait, v, 'traits')} 
                                                 color="text-blue-800"
                                             />
                                         ))}
@@ -552,7 +559,7 @@
                                                 label={flaw} 
                                                 value={activeChar.flaws[flaw]} 
                                                 max={6} 
-                                                onChange={(v) => updateChar(flaw, v, 'flaws', null, true)}
+                                                onChange={(v) => updateChar(flaw, v, 'flaws')}
                                                 color="text-red-800"
                                             />
                                         ))}
@@ -654,8 +661,21 @@
             );
         };
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
+        // --- Safe Startup Sequence ---
+        const startApp = () => {
+            // Wait for React, Lucide, and Firebase (if configured)
+            // Note: Firebase script sets window.firebaseLoaded = true
+            if (window.lucide && window.React && window.ReactDOM && (window.firebaseLoaded || !window.__firebase_config)) {
+                const root = ReactDOM.createRoot(document.getElementById('root'));
+                root.render(<App />);
+            } else {
+                // If not ready, check again in 50ms
+                setTimeout(startApp, 50);
+            }
+        };
+
+        // Begin the check
+        startApp();
     </script>
 </body>
 </html>
