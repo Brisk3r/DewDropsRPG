@@ -17,12 +17,12 @@
     <!-- Firebase SDKs -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, doc, setDoc, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Attach to window so Babel script can see them
         window.firebaseModules = {
-            initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged,
+            initializeApp, getAuth, signInAnonymously, onAuthStateChanged,
             getFirestore, collection, doc, setDoc, onSnapshot, serverTimestamp
         };
         // Flag to signal Firebase script has run
@@ -97,31 +97,44 @@
                 this.type = 'offline';
                 this.db = null;
                 this.auth = null;
-                this.appId = 'dewdrops-default';
+                // Using a fixed ID for your app's storage bucket path
+                this.appId = 'dewdrops_manager';
             }
 
             async init() {
                 try {
-                    // Check if window.firebaseModules is ready
-                    if (window.firebaseModules && window.__firebase_config) {
-                        const configStr = window.__firebase_config;
-                        const firebaseConfig = JSON.parse(configStr);
-                        
-                        const app = window.firebaseModules.initializeApp(firebaseConfig);
+                    // USER PROVIDED CONFIGURATION
+                    const dewdropsConfig = {
+                        apiKey: "AIzaSyCtNbE5ajxLdc57G5y3Wq9bz7ZgP4bgiEE",
+                        authDomain: "gamedb-903e3.firebaseapp.com",
+                        projectId: "gamedb-903e3",
+                        storageBucket: "gamedb-903e3.firebasestorage.app",
+                        messagingSenderId: "307571396357",
+                        appId: "1:307571396357:web:76358b8a778ea69932316c",
+                        measurementId: "G-X1L35GCLZD"
+                    };
+
+                    if (window.firebaseModules) {
+                        const app = window.firebaseModules.initializeApp(dewdropsConfig);
                         this.auth = window.firebaseModules.getAuth(app);
                         this.db = window.firebaseModules.getFirestore(app);
-                        this.appId = window.__app_id || 'dewdrops-default';
                         
-                        if (window.__initial_auth_token) {
-                            await window.firebaseModules.signInWithCustomToken(this.auth, window.__initial_auth_token);
-                        } else {
+                        // Attempt Anonymous Auth
+                        // Note: "Anonymous" must be enabled in your Firebase Console -> Authentication -> Sign-in method
+                        try {
                             await window.firebaseModules.signInAnonymously(this.auth);
+                            this.type = 'online';
+                            console.log("Connected to DewDrops DB");
+                            return true;
+                        } catch (authErr) {
+                            console.error("Auth failed. Check if Anonymous Auth is enabled in Firebase Console.", authErr);
+                            // Fallback to offline if auth fails
+                            this.type = 'offline'; 
+                            return false;
                         }
-                        this.type = 'online';
-                        return true;
                     }
                 } catch (e) {
-                    console.warn("Firebase Init Failed/Skipped, switching to Offline Mode:", e);
+                    console.warn("Firebase Init Failed, switching to Offline Mode:", e);
                 }
                 this.type = 'offline';
                 return false;
@@ -129,12 +142,15 @@
 
             subscribeList(callback) {
                 if (this.type === 'online' && this.db) {
+                    // Path: artifacts/dewdrops_manager/public/data/dewdrops_characters
                     const colRef = window.firebaseModules.collection(this.db, 'artifacts', this.appId, 'public', 'data', 'dewdrops_characters');
                     return window.firebaseModules.onSnapshot(colRef, (snapshot) => {
                         const chars = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                         chars.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
                         callback(chars);
-                    }, (err) => console.error("Snapshot error", err));
+                    }, (err) => {
+                        console.error("Snapshot error (Check Firestore Rules):", err);
+                    });
                 } else {
                     const loadLocal = () => {
                         try {
@@ -398,7 +414,7 @@
                         <div className="max-w-md w-full parchment p-8 rounded-lg shadow-xl border-t-8 border-slate-800 relative">
                              <div className="absolute top-2 right-2 text-[10px] uppercase font-bold flex items-center gap-1 text-slate-400">
                                 {connectionType === 'online' ? <Wifi size={10} className="text-green-500"/> : <CloudOff size={10} className="text-slate-500"/>}
-                                {connectionType === 'online' ? 'Live DB' : 'Offline Test Mode'}
+                                {connectionType === 'online' ? 'Live DB' : 'Offline Mode'}
                             </div>
 
                             <div className="text-center mb-8">
