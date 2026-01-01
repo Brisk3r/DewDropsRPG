@@ -11,8 +11,8 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- Icons: Using lucide-react specifically for component support -->
-    <script src="https://unpkg.com/lucide-react@0.263.1/dist/umd/lucide-react.min.js"></script>
+    <!-- Icons: Using lucide-react UMD build -->
+    <script src="https://unpkg.com/lucide-react@latest/dist/umd/lucide-react.min.js"></script>
     
     <!-- Firebase SDKs -->
     <script type="module">
@@ -57,6 +57,14 @@
         }
         
         /* Loading Spinner */
+        .loading-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            color: #1e293b;
+        }
         .loading-spinner {
             border: 4px solid #f3f3f3;
             border-top: 4px solid #1e293b;
@@ -64,6 +72,7 @@
             width: 40px;
             height: 40px;
             animation: spin 1s linear infinite;
+            margin-bottom: 1rem;
         }
         @keyframes spin {
             0% { transform: rotate(0deg); }
@@ -84,8 +93,11 @@
     </style>
 </head>
 <body>
-    <div id="root" class="min-h-screen flex items-center justify-center">
-        <div class="loading-spinner"></div>
+    <div id="root">
+        <div class="loading-container">
+            <div class="loading-spinner"></div>
+            <p id="loading-text" class="text-sm font-bold animate-pulse">Initializing DewDrops...</p>
+        </div>
     </div>
 
     <script type="text/babel" data-type="module">
@@ -97,7 +109,6 @@
                 this.type = 'offline';
                 this.db = null;
                 this.auth = null;
-                // Using a fixed ID for your app's storage bucket path
                 this.appId = 'dewdrops_manager';
             }
 
@@ -119,16 +130,13 @@
                         this.auth = window.firebaseModules.getAuth(app);
                         this.db = window.firebaseModules.getFirestore(app);
                         
-                        // Attempt Anonymous Auth
-                        // Note: "Anonymous" must be enabled in your Firebase Console -> Authentication -> Sign-in method
                         try {
                             await window.firebaseModules.signInAnonymously(this.auth);
                             this.type = 'online';
                             console.log("Connected to DewDrops DB");
                             return true;
                         } catch (authErr) {
-                            console.error("Auth failed. Check if Anonymous Auth is enabled in Firebase Console.", authErr);
-                            // Fallback to offline if auth fails
+                            console.warn("Auth failed. Falling back to offline.", authErr);
                             this.type = 'offline'; 
                             return false;
                         }
@@ -142,14 +150,15 @@
 
             subscribeList(callback) {
                 if (this.type === 'online' && this.db) {
-                    // Path: artifacts/dewdrops_manager/public/data/dewdrops_characters
                     const colRef = window.firebaseModules.collection(this.db, 'artifacts', this.appId, 'public', 'data', 'dewdrops_characters');
                     return window.firebaseModules.onSnapshot(colRef, (snapshot) => {
                         const chars = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                         chars.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
                         callback(chars);
                     }, (err) => {
-                        console.error("Snapshot error (Check Firestore Rules):", err);
+                        console.error("Snapshot error:", err);
+                        // Fallback to offline list if permissions fail
+                        callback([]);
                     });
                 } else {
                     const loadLocal = () => {
@@ -223,8 +232,9 @@
 
         const DiceRoller = ({ isOpen, onClose, charData }) => {
             if (!isOpen) return null;
-            // Destructure icons inside component safely
-            const { Dices } = window.lucide; 
+            // Access global icons
+            const Icons = window.LucideReact || window.lucide;
+            const Dices = Icons ? Icons.Dices : () => <span>🎲</span>;
 
             const [selectedStat, setSelectedStat] = useState('');
             const [selectedTrait, setSelectedTrait] = useState('');
@@ -308,12 +318,14 @@
 
         // --- Main App ---
         const App = () => {
-            // Safe Destructuring of Icons inside the App component
+            // Destructure icons from the global Lucide object
+            // UMD build exposes 'LucideReact'
+            const Icons = window.LucideReact || window.lucide;
             const { 
                 Circle, Save, Search, User, Shield, Skull, Scroll, 
                 Sword, Sparkles, Coins, ArrowLeft, Loader2, Dices, 
                 AlertTriangle, CloudOff, Wifi 
-            } = window.lucide;
+            } = Icons;
 
             const [view, setView] = useState('search');
             const [searchTerm, setSearchTerm] = useState('');
@@ -678,15 +690,34 @@
         };
 
         // --- Safe Startup Sequence ---
+        let attempts = 0;
         const startApp = () => {
-            // Wait for React, Lucide, and Firebase (if configured)
-            // Note: Firebase script sets window.firebaseLoaded = true
-            if (window.lucide && window.React && window.ReactDOM && (window.firebaseLoaded || !window.__firebase_config)) {
+            // Check for both possible Global names for Lucide
+            const iconsReady = window.LucideReact || window.lucide;
+            const reactReady = window.React && window.ReactDOM;
+            // Firebase script handles its own loading flag
+            const firebaseReady = window.firebaseLoaded;
+
+            const statusText = document.getElementById('loading-text');
+            if (statusText) {
+                if (!iconsReady) statusText.innerText = "Waiting for Icons...";
+                else if (!reactReady) statusText.innerText = "Waiting for React...";
+                else statusText.innerText = "Starting App...";
+            }
+
+            if (iconsReady && reactReady && firebaseReady) {
                 const root = ReactDOM.createRoot(document.getElementById('root'));
                 root.render(<App />);
             } else {
-                // If not ready, check again in 50ms
-                setTimeout(startApp, 50);
+                attempts++;
+                // Force start after 4 seconds (80 attempts * 50ms) to prevent infinite hang
+                if (attempts > 80) {
+                    console.warn("Forcing app start due to timeout. Some icons might be missing.");
+                    const root = ReactDOM.createRoot(document.getElementById('root'));
+                    root.render(<App />);
+                } else {
+                    setTimeout(startApp, 50);
+                }
             }
         };
 
